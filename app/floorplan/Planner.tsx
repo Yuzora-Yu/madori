@@ -587,6 +587,8 @@ export default function Planner() {
           </details>
           <button
             className="quiet-button"
+            aria-label="読込"
+            title="間取りファイルを読込"
             onClick={() => importInput.current?.click()}
           >
             <Icon name="upload" size={17} />

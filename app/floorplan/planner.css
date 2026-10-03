@@ -1,5 +1,15 @@
 @import url("./planner-base.css");
 
+.number-field input {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.number-field input::-webkit-inner-spin-button,
+.number-field input::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
 .project-menu {
   position: relative;
 }
