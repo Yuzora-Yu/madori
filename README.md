@@ -28,9 +28,9 @@ npm run dev
 
 ## GitHub Pagesで使う
 
-公開先: **https://yuzora-yu.github.io/madori/** （Pagesの有効化と最初のデプロイ後）
+公開先: **https://yuzora-yu.github.io/madori/**
 
-リポジトリの **Settings → Pages → Build and deployment → Source** を **GitHub Actions** に設定してください。`main` へPushするたびにチェックとビルドを行い、成功したものを自動公開します。公開リポジトリならGitHub FreeのPagesで利用できます。公開サイトにはアプリだけが含まれ、各端末の間取りや家具データはアップロードしません。
+このリポジトリではGitHub Pagesを有効化済みです。`main` へPushするたびにチェックとビルドを行い、成功したものを自動公開します。公開リポジトリならGitHub FreeのPagesで利用できます。公開サイトにはアプリだけが含まれ、各端末の間取りや家具データはアップロードしません。別リポジトリへ複製する場合は **Settings → Pages → Build and deployment → Source** を **GitHub Actions** に設定してください。
 
 HTTPSの公開版は一度読み込むとアプリ資材をキャッシュします。初回オフライン準備の完了後は2D・3Dとも通信せずに使えます。ブラウザがキャッシュや保存データを消す場合に備え、JSONバックアップを残してください。更新版は古いタブをすべて閉じてから再度開くと適用されます。
 

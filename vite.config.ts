@@ -1,8 +1,8 @@
-import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
 
 export default defineConfig({
-  base: './',
+  base: "./",
   plugins: [react()],
-  build: { target: 'es2022', sourcemap: true },
+  build: { target: "es2022", sourcemap: true },
 });

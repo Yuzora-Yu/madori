@@ -51,4 +51,3 @@ npm run build
 ```
 
 2D編集はSVG、3Dは遅延読込のThree.js。3Dは操作とサイズ変更の際のみ描画し、外部画像・フォントは読み込みません。コードは `app/floorplan/`、純粋な幾何・保存形式ロジックは `packages/floorplan/` にあります。
-

@@ -1,18 +1,19 @@
-import { readdir, readFile, writeFile } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { readdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 const files = [];
 async function collect(folder) {
   for (const entry of await readdir(folder, { withFileTypes: true })) {
     const path = `${folder}/${entry.name}`;
     if (entry.isDirectory()) await collect(path);
-    else if (!path.endsWith('.map') && entry.name !== 'sw.js') files.push(path.slice(5));
+    else if (!path.endsWith(".map") && entry.name !== "sw.js")
+      files.push(path.slice(5));
   }
 }
-await collect('dist');
+await collect("dist");
 files.sort();
-const hash = createHash('sha256');
+const hash = createHash("sha256");
 for (const file of files) hash.update(await readFile(`dist/${file}`));
-const cache = `madori-${hash.digest('hex').slice(0, 16)}`;
+const cache = `madori-${hash.digest("hex").slice(0, 16)}`;
 const source = `const CACHE=${JSON.stringify(cache)};
 const FILES=${JSON.stringify(files)};
 const absolute=(path)=>new URL(path,self.registration.scope).href;
@@ -28,5 +29,5 @@ self.addEventListener('fetch',event=>{
   }
 });
 `;
-await writeFile('dist/sw.js', source);
+await writeFile("dist/sw.js", source);
 console.log(`Offline shell: ${files.length} files in ${cache}`);
