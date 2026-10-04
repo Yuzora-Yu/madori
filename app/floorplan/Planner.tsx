@@ -1,4 +1,10 @@
 import {
+  interiorRoom,
+  resizeRoomInterior,
+  wallInsets,
+  wallInteriorLength,
+} from "../../packages/floorplan/geometry";
+import {
   lazy,
   Suspense,
   useCallback,
@@ -134,7 +140,12 @@ export default function Planner() {
   const change = useCallback(
     (edit: (p: Project) => void) => {
       const next = structuredClone(project);
-      edit(next);
+      try {
+        edit(next);
+      } catch (e) {
+        setNotice(e instanceof Error ? e.message : "変更できませんでした。");
+        return;
+      }
       remember(project);
       setProject(next);
     },
@@ -529,7 +540,10 @@ export default function Planner() {
       (category === "すべて" || f.category === category) &&
       f.name.includes(search),
   );
-  const totalArea = roomList.reduce((sum, r) => sum + r.area, 0);
+  const totalArea = roomList.reduce(
+    (sum, r) => sum + interiorRoom(project, r).area,
+    0,
+  );
   return (
     <div className="planner">
       <header className="app-header">
@@ -661,6 +675,26 @@ export default function Planner() {
               >
                 <Icon name="plus" size={18} />
                 家具をつくる
+              </button>
+              <button
+                className="create-furniture"
+                onClick={() =>
+                  setFurnitureEditor({
+                    id: "",
+                    name: "造作棚",
+                    category: "造作",
+                    width: 120,
+                    depth: 35,
+                    height: 180,
+                    color: "#b9a184",
+                    shape: "shelf",
+                    shelfLevels: 4,
+                    baseElevation: 0,
+                  })
+                }
+              >
+                <Icon name="shelf" size={18} />
+                造作棚をつくる
               </button>
               <div className="library-filters">
                 <input
@@ -918,7 +952,7 @@ export default function Planner() {
                         textAnchor="middle"
                         className="room-area"
                       >
-                        {r.area.toFixed(1)} m²
+                        {interiorRoom(project, r).area.toFixed(1)} m²
                       </text>
                     </g>
                   );
@@ -971,11 +1005,20 @@ export default function Planner() {
                       dy = w.b.y - w.a.y;
                     const nx = (dy / length) * 26,
                       ny = (-dx / length) * 26;
+                    const inset = wallInsets(project, w),
+                      a = {
+                        x: w.a.x + (dx / length) * inset.start,
+                        y: w.a.y + (dy / length) * inset.start,
+                      },
+                      b = {
+                        x: w.b.x - (dx / length) * inset.end,
+                        y: w.b.y - (dy / length) * inset.end,
+                      };
                     return (
                       <g key={`dim-${w.id}`} pointerEvents="none">
                         <path
                           className="dim-line"
-                          d={`M${w.a.x + nx} ${w.a.y + ny} L${w.b.x + nx} ${w.b.y + ny} M${w.a.x + nx - 3} ${w.a.y + ny - 3} l6 6 M${w.b.x + nx - 3} ${w.b.y + ny - 3} l6 6`}
+                          d={`M${a.x + nx} ${a.y + ny} L${b.x + nx} ${b.y + ny} M${a.x + nx - 3} ${a.y + ny - 3} l6 6 M${b.x + nx - 3} ${b.y + ny - 3} l6 6`}
                         />
                         <text
                           className="dim-label"
@@ -983,7 +1026,8 @@ export default function Planner() {
                           x={(w.a.x + w.b.x) / 2 + nx}
                           y={(w.a.y + w.b.y) / 2 + ny - 5}
                         >
-                          {Math.round(length)} cm
+                          {Math.round(wallInteriorLength(project, w) * 10) / 10}{" "}
+                          cm 内寸
                         </text>
                       </g>
                     );
@@ -1181,6 +1225,60 @@ export default function Planner() {
                   />
                 ))}
               </div>
+              {selectedItem.kind === "door" && (
+                <>
+                  <h3 className="section-label">ドアの開き方</h3>
+                  <label className="field">
+                    蝶番
+                    <select
+                      value={selectedItem.doorHinge ?? "left"}
+                      onChange={(e) => setItem("doorHinge", e.target.value)}
+                    >
+                      <option value="left">左端</option>
+                      <option value="right">右端</option>
+                    </select>
+                  </label>
+                  <label className="field">
+                    開く側
+                    <select
+                      value={selectedItem.doorSwing ?? "positive"}
+                      onChange={(e) => setItem("doorSwing", e.target.value)}
+                    >
+                      <option value="positive">下側（回転前の図）</option>
+                      <option value="negative">上側（回転前の図）</option>
+                    </select>
+                  </label>
+                  <NumberField
+                    label="開く角度"
+                    value={selectedItem.doorAngle ?? 90}
+                    min={0}
+                    max={180}
+                    unit="°"
+                    onChange={(v) => setItem("doorAngle", v)}
+                  />
+                </>
+              )}
+              {selectedItem.shape === "shelf" && (
+                <>
+                  <h3 className="section-label">造作棚</h3>
+                  <NumberField
+                    label="段数"
+                    value={selectedItem.shelfLevels ?? 4}
+                    min={1}
+                    max={20}
+                    unit="段"
+                    onChange={(v) => setItem("shelfLevels", Math.round(v))}
+                  />
+                  <NumberField
+                    label="床からの高さ"
+                    value={selectedItem.baseElevation ?? 0}
+                    min={0}
+                    max={2000}
+                    unit="cm"
+                    onChange={(v) => setItem("baseElevation", v)}
+                  />
+                </>
+              )}
               <h3 className="section-label">位置・向き</h3>
               <div className="dimension-fields two">
                 <NumberField
@@ -1269,13 +1367,50 @@ export default function Planner() {
               </div>
               <NumberField
                 key={`${selectedWall.id}-length`}
-                label="長さ（実寸を指定）"
-                value={Math.round(distance(selectedWall.a, selectedWall.b))}
+                label="長さ（内寸）"
+                value={
+                  Math.round(wallInteriorLength(project, selectedWall) * 10) /
+                  10
+                }
                 unit="cm"
                 min={10}
                 max={20000}
                 onChange={(v) =>
-                  change((p) => resizeWall(p, selectedWall.id, v))
+                  change((p) => {
+                    const room = roomList.find((r) => {
+                      const m = interiorRoom(p, r);
+                      return (
+                        m.rectangular &&
+                        r.points.some(
+                          (pt) => distance(pt, selectedWall.a) < 0.1,
+                        ) &&
+                        r.points.some(
+                          (pt) => distance(pt, selectedWall.b) < 0.1,
+                        ) &&
+                        Math.abs(
+                          distance(selectedWall.a, selectedWall.b) -
+                            (selectedWall.a.y === selectedWall.b.y
+                              ? m.maxX - m.minX
+                              : m.maxY - m.minY),
+                        ) < 0.1
+                      );
+                    });
+                    if (room)
+                      resizeRoomInterior(
+                        p,
+                        room,
+                        selectedWall.a.y === selectedWall.b.y ? "x" : "y",
+                        v,
+                      );
+                    else {
+                      const inset = wallInsets(p, selectedWall);
+                      resizeWall(
+                        p,
+                        selectedWall.id,
+                        v + inset.start + inset.end,
+                      );
+                    }
+                  })
                 }
               />
               <NumberField
@@ -1306,7 +1441,7 @@ export default function Planner() {
                 }
               />
               <p className="property-note">
-                手描きのあとで実寸を入力できます。始点を固定して終点を調整し、接続された壁も追従します。
+                壁の内側同士の距離です。四角い部屋は部屋を選んで幅・奥行も入力できます。接続する壁も追従します。
               </p>
               <button className="wide-button danger" onClick={remove}>
                 <Icon name="trash" size={17} />
@@ -1325,10 +1460,41 @@ export default function Planner() {
                   onChange={(e) => renameRoom(e.target.value)}
                 />
               </label>
+              {interiorRoom(project, selectedRoom).rectangular ? (
+                <div className="dimension-fields two">
+                  <NumberField
+                    label="内寸の幅"
+                    value={interiorRoom(project, selectedRoom).width}
+                    min={10}
+                    max={20000}
+                    unit="cm"
+                    onChange={(v) =>
+                      change((p) => resizeRoomInterior(p, selectedRoom, "x", v))
+                    }
+                  />
+                  <NumberField
+                    label="内寸の奥行"
+                    value={interiorRoom(project, selectedRoom).depth}
+                    min={10}
+                    max={20000}
+                    unit="cm"
+                    onChange={(v) =>
+                      change((p) => resizeRoomInterior(p, selectedRoom, "y", v))
+                    }
+                  />
+                </div>
+              ) : (
+                <p className="property-note">
+                  変形した部屋は各壁を選んで内寸を入力してください。
+                </p>
+              )}
+              <p className="property-note">
+                内寸は壁の内側から内側まで。右側・下側の壁と、それにつながる壁を移動します。隣の部屋の寸法も変わります。
+              </p>
               <div className="room-summary">
-                <span>床面積</span>
+                <span>床面積（内寸）</span>
                 <strong>
-                  {selectedRoom.area.toFixed(2)}
+                  {interiorRoom(project, selectedRoom).area.toFixed(2)}
                   <small> m²</small>
                 </strong>
               </div>
@@ -1353,7 +1519,7 @@ export default function Planner() {
                 />
               </label>
               <p className="property-note">
-                面積は壁の中心線を基準に計算しています。
+                面積は壁の厚みを差し引いた内寸で計算しています。
               </p>
             </div>
           ) : (
@@ -1462,6 +1628,8 @@ export default function Planner() {
                     height: f.height,
                     color: f.color,
                     shape: f.shape,
+                    shelfLevels: f.shelfLevels,
+                    baseElevation: f.baseElevation,
                   });
               }
             });
@@ -1538,7 +1706,7 @@ export default function Planner() {
             </ol>
             <p className="property-note">
               Alt＋ドラッグ：画面移動 / ホイール：拡大縮小 / Ctrl＋Z：元に戻す /
-              Delete：削除。図面は配置検討用です。壁芯面積を表示します。
+              Delete：削除。図面は配置検討用です。内寸と内寸面積を表示します。
             </p>
             <button className="primary-button" onClick={() => setHelp(false)}>
               はじめる
@@ -1710,6 +1878,7 @@ function FurnitureModal({
                 ["bed", "ベッド"],
                 ["table", "テーブル"],
                 ["storage", "収納"],
+                ["shelf", "造作棚"],
                 ["appliance", "家電"],
                 ["plant", "植物"],
               ].map(([v, label]) => (
@@ -1743,6 +1912,34 @@ function FurnitureModal({
             </label>
           ))}
         </div>
+        {form.shape === "shelf" && (
+          <div className="dimension-fields two">
+            <label className="field">
+              段数
+              <input
+                type="number"
+                required
+                min="1"
+                max="20"
+                step="1"
+                value={form.shelfLevels ?? 4}
+                onChange={(e) => set("shelfLevels", Number(e.target.value))}
+              />
+            </label>
+            <label className="field">
+              床からの高さ（cm）
+              <input
+                type="number"
+                required
+                min="0"
+                max="2000"
+                step="0.1"
+                value={form.baseElevation ?? 0}
+                onChange={(e) => set("baseElevation", Number(e.target.value))}
+              />
+            </label>
+          </div>
+        )}
         <label className="field color-field">
           色
           <input

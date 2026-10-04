@@ -10,10 +10,19 @@ export interface Wall {
   height: number;
 }
 export type Shape =
-  "sofa" | "bed" | "table" | "storage" | "appliance" | "plant" | "generic";
+  | "sofa"
+  | "bed"
+  | "table"
+  | "storage"
+  | "shelf"
+  | "appliance"
+  | "plant"
+  | "generic";
 export type FixtureKind =
   "door" | "sliding" | "window" | "bath" | "toilet" | "outlet";
 export interface Furniture {
+  baseElevation?: number;
+  shelfLevels?: number;
   id: string;
   name: string;
   category: string;
@@ -24,6 +33,11 @@ export interface Furniture {
   shape: Shape;
 }
 export interface Item {
+  baseElevation?: number;
+  shelfLevels?: number;
+  doorHinge?: "left" | "right";
+  doorSwing?: "positive" | "negative";
+  doorAngle?: number;
   id: string;
   furnitureId?: string;
   kind?: FixtureKind;
@@ -44,7 +58,8 @@ export interface RoomLabel {
   color: string;
 }
 export interface Project {
-  formatVersion: 1;
+  formatVersion: 2;
+  dimensionBasis: "interior";
   name: string;
   nextId: number;
   walls: Wall[];
@@ -162,7 +177,7 @@ export function addWall(p: Project, start: Point, end: Point) {
 }
 export function resizeWall(p: Project, id: string, length: number) {
   const w = p.walls.find((w) => w.id === id);
-  if (!w || length < 10 || length > 20000) return;
+  if (!w || length < 10 || length > 20100) return;
   const attached = p.items
     .filter(
       (i) => i.kind && ["door", "sliding", "window", "outlet"].includes(i.kind),
@@ -172,14 +187,28 @@ export function resizeWall(p: Project, id: string, length: number) {
         .map((wall) => ({ wall, hit: projectOnWall(item, wall) }))
         .sort((a, b) => a.hit.distance - b.hit.distance)[0];
       return near && near.hit.distance < near.wall.thickness / 2 + 2
-        ? [{ item, wallId: near.wall.id, t: near.hit.t }]
+        ? [
+            {
+              item,
+              wallId: near.wall.id,
+              t: near.hit.t,
+              angle:
+                item.rotation -
+                (Math.atan2(
+                  near.wall.b.y - near.wall.a.y,
+                  near.wall.b.x - near.wall.a.x,
+                ) *
+                  180) /
+                  Math.PI,
+            },
+          ]
         : [];
     });
   const old = { ...w.b },
     ratio = length / distance(w.a, w.b);
   const b = {
-    x: Math.round(w.a.x + (w.b.x - w.a.x) * ratio),
-    y: Math.round(w.a.y + (w.b.y - w.a.y) * ratio),
+    x: w.a.x + (w.b.x - w.a.x) * ratio,
+    y: w.a.y + (w.b.y - w.a.y) * ratio,
   };
   for (const other of p.walls) {
     if (same(other.a, old)) other.a = { ...b };
@@ -190,7 +219,8 @@ export function resizeWall(p: Project, id: string, length: number) {
     a.item.x = wall.a.x + (wall.b.x - wall.a.x) * a.t;
     a.item.y = wall.a.y + (wall.b.y - wall.a.y) * a.t;
     a.item.rotation =
-      (Math.atan2(wall.b.y - wall.a.y, wall.b.x - wall.a.x) * 180) / Math.PI;
+      (Math.atan2(wall.b.y - wall.a.y, wall.b.x - wall.a.x) * 180) / Math.PI +
+      a.angle;
   }
 }
 export function rooms(p: Pick<Project, "walls">): Room[] {
@@ -315,6 +345,12 @@ export function placeFixture(
     shape: "generic",
     rotation: 0,
   };
+  if (kind === "door")
+    Object.assign(item, {
+      doorHinge: "left",
+      doorSwing: "positive",
+      doorAngle: 90,
+    });
   moveItem(p, item, point);
   p.items.push(item);
   return item;
@@ -332,15 +368,20 @@ export function moveItem(p: Project, item: Item, point: Point) {
     if (near && near.hit.distance < 50) {
       item.x = near.hit.x;
       item.y = near.hit.y;
-      item.rotation =
+      const angle =
         (Math.atan2(near.w.b.y - near.w.a.y, near.w.b.x - near.w.a.x) * 180) /
         Math.PI;
+      const difference = (a: number) =>
+        Math.abs(((((a - item.rotation + 540) % 360) + 360) % 360) - 180);
+      item.rotation =
+        difference(angle) <= difference(angle + 180) ? angle : angle + 180;
     }
   }
 }
 export function emptyProject(): Project {
   return {
-    formatVersion: 1,
+    formatVersion: 2,
+    dimensionBasis: "interior",
     name: "新しい間取り",
     nextId: 1,
     walls: [],
@@ -464,7 +505,11 @@ export function demoProject(): Project {
 }
 export function parseProject(text: string): Project {
   const p = JSON.parse(text);
-  if (!p || p.formatVersion !== 1)
+  if (
+    !p ||
+    ![1, 2].includes(p.formatVersion) ||
+    (p.formatVersion === 2 && p.dimensionBasis !== "interior")
+  )
     throw new Error(
       "対応していない保存形式です。元のファイルは変更されません。",
     );
@@ -476,7 +521,10 @@ export function parseProject(text: string): Project {
   const dimensions = (v: Furniture | Item) =>
     finite(v.width, 1, 20000) &&
     finite(v.depth, 1, 20000) &&
-    finite(v.height, 1, 20000);
+    finite(v.height, 1, 20000) &&
+    (v.baseElevation === undefined || finite(v.baseElevation, 0, 2000)) &&
+    (v.shelfLevels === undefined ||
+      (Number.isInteger(v.shelfLevels) && finite(v.shelfLevels, 1, 20)));
   const appearance = (v: Furniture | Item) =>
     str(v.name) &&
     /^#[\da-f]{6}$/i.test(v.color) &&
@@ -485,6 +533,7 @@ export function parseProject(text: string): Project {
       "bed",
       "table",
       "storage",
+      "shelf",
       "appliance",
       "plant",
       "generic",
@@ -523,6 +572,11 @@ export function parseProject(text: string): Project {
         dimensions(i) &&
         appearance(i) &&
         finite(i.rotation) &&
+        (i.doorHinge === undefined ||
+          ["left", "right"].includes(i.doorHinge)) &&
+        (i.doorSwing === undefined ||
+          ["positive", "negative"].includes(i.doorSwing)) &&
+        (i.doorAngle === undefined || finite(i.doorAngle, 0, 180)) &&
         (!i.kind || Object.hasOwn(fixtureDefaults, i.kind)) &&
         (!i.furnitureId ||
           p.furniture.some((f: Furniture) => f.id === i.furnitureId)),
@@ -539,5 +593,18 @@ export function parseProject(text: string): Project {
     ids.some((id) => /^[wif]\d+$/.test(id) && Number(id.slice(1)) >= p.nextId)
   )
     throw new Error("オブジェクトIDが重複または不正です。");
+  // Version 1 geometry is retained; dimensions now measure the inner wall faces.
+  if (p.formatVersion === 1) {
+    p.formatVersion = 2;
+    p.dimensionBasis = "interior";
+    p.items.forEach((i: Item) => {
+      if (i.kind === "door")
+        Object.assign(i, {
+          doorHinge: i.doorHinge ?? "left",
+          doorSwing: i.doorSwing ?? "positive",
+          doorAngle: i.doorAngle ?? 90,
+        });
+    });
+  }
   return p as Project;
 }

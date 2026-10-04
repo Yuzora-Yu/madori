@@ -10,6 +10,7 @@ export type IconName =
   | "sofa"
   | "bed"
   | "table"
+  | "shelf"
   | "storage"
   | "appliance"
   | "plant"
@@ -43,6 +44,7 @@ const paths: Record<IconName, string> = {
   sofa: "M5 11V6a2 2 0 012-2h10a2 2 0 012 2v5 M3 10h4v6h10v-6h4v9H3z M6 19v2 M18 19v2",
   bed: "M4 20V5h16v15 M4 11h16 M7 7h3v4 M14 7h3v4 M4 18h16",
   table: "M3 7h18v4H3z M6 11v9 M18 11v9",
+  shelf: "M4 3h16v18H4z M4 9h16 M4 15h16",
   storage: "M4 3h16v18H4z M12 3v18 M8 11v3 M16 11v3",
   appliance: "M6 2h12v20H6z M6 9h12 M9 5v2 M9 12v3",
   plant:

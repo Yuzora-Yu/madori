@@ -1,3 +1,4 @@
+import { doorPose, shelfBoards } from "../../packages/floorplan/geometry";
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -217,7 +218,11 @@ export default function Scene3D({
     }
     function furniture(item: Item) {
       const group = new THREE.Group();
-      group.position.set(item.x / 100, 0.015, item.y / 100);
+      group.position.set(
+        item.x / 100,
+        0.015 + (item.baseElevation ?? 0) / 100,
+        item.y / 100,
+      );
       group.rotation.y = (-item.rotation * Math.PI) / 180;
       scene.add(group);
       const w = item.width / 100,
@@ -259,9 +264,10 @@ export default function Scene3D({
           c,
         );
         if (item.kind === "door") {
-          door.position.x = w / 2;
-          door.position.z = w / 2;
-          door.rotation.y = Math.PI / 2;
+          const pose = doorPose(item);
+          door.position.x = pose.center.x / 100;
+          door.position.z = pose.center.y / 100;
+          door.rotation.y = -pose.angle;
         }
         return;
       }
@@ -278,7 +284,16 @@ export default function Scene3D({
         add(w, h, d * 0.23, 0, h / 2, -d * 0.35, "#e1e9e6");
         return;
       }
-      if (item.shape === "sofa") {
+      if (item.shape === "shelf") {
+        const boards = shelfBoards(item),
+          t = boards.thickness / 100;
+        add(t, h, d, -w / 2 + t / 2, h / 2, 0);
+        add(t, h, d, w / 2 - t / 2, h / 2, 0);
+        add(w, h, t, 0, h / 2, -d / 2 + t / 2);
+        boards.heights.forEach((y) =>
+          add(w - 2 * t, t, d - t, 0, y / 100, t / 2),
+        );
+      } else if (item.shape === "sofa") {
         add(w, 0.22, d, 0, 0.22, 0);
         add(w, h * 0.65, 0.16, 0, h * 0.65, -d / 2 + 0.08);
         for (const x of [-w / 2 + 0.08, w / 2 - 0.08])

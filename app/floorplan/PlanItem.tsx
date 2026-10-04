@@ -1,3 +1,4 @@
+import { doorPose } from "../../packages/floorplan/geometry";
 import type { Item } from "../../packages/floorplan/model";
 export default function PlanItem({
   item: i,
@@ -10,6 +11,7 @@ export default function PlanItem({
 }) {
   const w = i.width,
     d = i.depth;
+  const pose = doorPose(i);
   return (
     <g
       transform={`translate(${i.x} ${i.y}) rotate(${i.rotation})`}
@@ -42,9 +44,9 @@ export default function PlanItem({
             strokeWidth="16"
           />
           <path
-            d={`M${-w / 2} 0 v${w} M${-w / 2} ${w} A${w} ${w} 0 0 0 ${w / 2} 0`}
+            d={`M${pose.hinge.x} 0 L${pose.tip.x} ${pose.tip.y} ${(i.doorAngle ?? 90) > 0 ? `M${pose.closed.x} 0 A${w} ${w} 0 0 ${pose.sweep} ${pose.tip.x} ${pose.tip.y}` : ""}`}
           />
-          <circle cx={-w / 2} cy="0" r="3" fill="#87785f" />
+          <circle cx={pose.hinge.x} cy="0" r="3" fill="#87785f" />
         </g>
       ) : i.kind === "sliding" ? (
         <g>
@@ -169,6 +171,24 @@ export default function PlanItem({
                   fill="none"
                   stroke="#ffffff55"
                 />
+              )}
+              {i.shape === "shelf" && (
+                <>
+                  <path
+                    d={`M${-w / 2 + 3} ${-d / 2 + 3} h${w - 6} M${-w / 2 + 3} ${-d / 2 + 3} v${d - 6} M${w / 2 - 3} ${-d / 2 + 3} v${d - 6}`}
+                    strokeWidth="3"
+                  />
+                  <text
+                    x="0"
+                    y="4"
+                    textAnchor="middle"
+                    stroke="none"
+                    fill="#475846"
+                    fontSize="12"
+                  >
+                    {i.shelfLevels ?? 4}段
+                  </text>
+                </>
               )}
               {i.shape === "storage" && (
                 <path d={`M0 ${-d / 2} v${d} M-9 -3v6 M9 -3v6`} />
