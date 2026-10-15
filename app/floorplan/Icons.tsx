@@ -1,4 +1,7 @@
 export type IconName =
+  | "settings"
+  | "expand"
+  | "collapse"
   | "cursor"
   | "wall"
   | "door"
@@ -33,6 +36,9 @@ export type IconName =
   | "copy"
   | "help";
 const paths: Record<IconName, string> = {
+  settings: "M4 6h16 M4 12h16 M4 18h16 M8 3v6 M16 9v6 M10 15v6",
+  expand: "M9 3H3v6 M15 3h6v6 M3 15v6h6 M21 15v6h-6",
+  collapse: "M3 9h6V3 M21 9h-6V3 M3 15h6v6 M21 15h-6v6",
   cursor: "M5 3l14 9-7 1-3 7z",
   wall: "M4 5h16v14H4z M4 12h16 M10 5v7 M15 12v7",
   door: "M5 20V4h12v16 M5 4l9 3v13l-9-3 M11 12v2",

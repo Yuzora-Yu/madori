@@ -111,6 +111,88 @@ export default function Planner() {
     null,
   );
   const [help, setHelp] = useState(false);
+  const [compact, setCompact] = useState(
+    () => window.matchMedia("(max-width: 1100px)").matches,
+  );
+  const [focusMode, setFocusMode] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(
+    () => !window.matchMedia("(max-width: 1100px)").matches,
+  );
+  const [detailsOpen, setDetailsOpen] = useState(
+    () => !window.matchMedia("(max-width: 1100px)").matches,
+  );
+  const previousPanels = useRef({ library: true, details: true });
+  const canvasDimensions = useRef<{ width: number; height: number } | null>(
+    null,
+  );
+  const overlayPanels = compact || focusMode;
+  const toggleFocus = useCallback(() => {
+    if (focusMode) {
+      setLibraryOpen(!compact && previousPanels.current.library);
+      setDetailsOpen(!compact && previousPanels.current.details);
+    } else {
+      previousPanels.current = { library: libraryOpen, details: detailsOpen };
+      setLibraryOpen(false);
+      setDetailsOpen(false);
+    }
+    setFocusMode(!focusMode);
+  }, [focusMode, compact, libraryOpen, detailsOpen]);
+  const togglePanel = (panel: "library" | "details") => {
+    if (panel === "library") {
+      setLibraryOpen(!libraryOpen);
+      if (overlayPanels) setDetailsOpen(false);
+    } else {
+      setDetailsOpen(!detailsOpen);
+      if (overlayPanels) setLibraryOpen(false);
+    }
+  };
+  const closePanel = (panel: "library" | "details") => {
+    if (panel === "library") setLibraryOpen(false);
+    else setDetailsOpen(false);
+    document.getElementById(`${panel}-toggle`)?.focus();
+  };
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 1100px)");
+    const update = () => {
+      setCompact(query.matches);
+      setLibraryOpen(false);
+      setDetailsOpen(false);
+    };
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  useEffect(() => {
+    if (!overlayPanels || (!libraryOpen && !detailsOpen)) return;
+    const panel = document.getElementById(
+      libraryOpen ? "library-panel" : "details-panel",
+    );
+    const previous = document.activeElement as HTMLElement | null;
+    const elements = () =>
+      Array.from(
+        panel?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled), select:not(:disabled), summary, [tabindex="0"]',
+        ) ?? [],
+      ).filter((el) => el.getClientRects().length > 0);
+    elements()[0]?.focus();
+    const handle = (e: KeyboardEvent) => {
+      if (document.querySelector(".modal") || e.key !== "Tab") return;
+      const list = elements(),
+        first = list[0],
+        last = list.at(-1);
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last?.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first?.focus();
+      }
+    };
+    window.addEventListener("keydown", handle);
+    return () => {
+      window.removeEventListener("keydown", handle);
+      if (previous?.isConnected) previous.focus();
+    };
+  }, [overlayPanels, libraryOpen, detailsOpen]);
   const [history, setHistory] = useState<{
     past: Project[];
     future: Project[];
@@ -223,9 +305,28 @@ export default function Planner() {
   useEffect(() => {
     const el = svg.current;
     if (!el || mode !== "2d") return;
-    const observer = new ResizeObserver(() =>
-      setCanvasSize({ width: el.clientWidth, height: el.clientHeight }),
-    );
+    const observer = new ResizeObserver(() => {
+      const width = el.clientWidth,
+        height = el.clientHeight;
+      if (!width || !height) return;
+      const previous = canvasDimensions.current;
+      canvasDimensions.current = { width, height };
+      setCanvasSize({ width, height });
+      setView((v) => {
+        const scale = Math.min(
+          (previous?.width ?? width) / v.width,
+          (previous?.height ?? height) / v.height,
+        );
+        const nextWidth = width / scale,
+          nextHeight = height / scale;
+        return {
+          x: v.x + (v.width - nextWidth) / 2,
+          y: v.y + (v.height - nextHeight) / 2,
+          width: nextWidth,
+          height: nextHeight,
+        };
+      });
+    });
     observer.observe(el);
     return () => observer.disconnect();
   }, [mode]);
@@ -298,6 +399,17 @@ export default function Planner() {
       )
         return;
       if (e.key === "Escape") {
+        if (overlayPanels && (libraryOpen || detailsOpen)) {
+          e.preventDefault();
+          setLibraryOpen(false);
+          setDetailsOpen(false);
+          return;
+        }
+        if (focusMode && !gesture.current) {
+          e.preventDefault();
+          toggleFocus();
+          return;
+        }
         const g = gesture.current;
         if (g?.type === "item") setProject(g.before);
         gesture.current = null;
@@ -318,6 +430,15 @@ export default function Planner() {
         e.preventDefault();
         remove();
       }
+      if (
+        e.key.toLowerCase() === "f" &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey
+      ) {
+        e.preventDefault();
+        toggleFocus();
+      }
       if (e.key.toLowerCase() === "v") setTool("select");
       if (e.key.toLowerCase() === "w") setTool("wall");
       if (e.key.toLowerCase() === "r" && selectedItem)
@@ -328,7 +449,20 @@ export default function Planner() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [undo, redo, remove, selectedItem, change, furnitureEditor, help]);
+  }, [
+    undo,
+    redo,
+    remove,
+    selectedItem,
+    change,
+    furnitureEditor,
+    help,
+    focusMode,
+    toggleFocus,
+    overlayPanels,
+    libraryOpen,
+    detailsOpen,
+  ]);
   function world(e: { clientX: number; clientY: number }): Point {
     const matrix = svg.current?.getScreenCTM();
     if (!matrix) return { x: 0, y: 0 };
@@ -342,10 +476,11 @@ export default function Planner() {
     y: snap(p.y, snapping),
   });
   function pointerDown(e: React.PointerEvent<SVGSVGElement>) {
-    if (e.button !== 0 && e.button !== 1) return;
+    if (![0, 1, 2].includes(e.button)) return;
     const point = snapped(world(e));
     svg.current?.setPointerCapture(e.pointerId);
-    if (e.button === 1 || tool === "pan" || e.altKey) {
+    if (e.button === 1 || e.button === 2 || tool === "pan" || e.altKey) {
+      e.preventDefault();
       const m = svg.current?.getScreenCTM();
       gesture.current = {
         type: "pan",
@@ -446,6 +581,7 @@ export default function Planner() {
     setSelection({ type: "item", id });
     setTool("select");
     setMode("2d");
+    if (overlayPanels) setLibraryOpen(false);
     setNotice(`${f.name}を配置しました。ドラッグで位置を調整できます。`);
   }
   function setItem(key: string, value: string | number) {
@@ -545,8 +681,10 @@ export default function Planner() {
     0,
   );
   return (
-    <div className="planner">
-      <header className="app-header">
+    <div
+      className={`planner ${focusMode ? "focus-mode" : ""} ${overlayPanels ? "overlay-panels" : ""} ${libraryOpen ? "library-open" : ""} ${detailsOpen ? "details-open" : ""}`}
+    >
+      <header className="app-header" hidden={focusMode}>
         <a className="brand" href={import.meta.env.BASE_URL}>
           <span className="brand-symbol">
             <Icon name="plan" size={25} />
@@ -634,13 +772,38 @@ export default function Planner() {
         />
       </header>
       <div className="workspace">
-        <aside className="library-panel">
+        {overlayPanels && (libraryOpen || detailsOpen) && (
+          <button
+            className="panel-backdrop"
+            aria-label="パネルを閉じて図面に戻る"
+            onClick={() => closePanel(libraryOpen ? "library" : "details")}
+          />
+        )}
+        <aside
+          id="library-panel"
+          className="library-panel"
+          aria-label="家具と設備"
+          hidden={!libraryOpen}
+          role={overlayPanels ? "dialog" : undefined}
+          aria-modal={overlayPanels && libraryOpen ? true : undefined}
+        >
           <div className="panel-heading">
             <div>
               <span className="eyebrow">YOUR COLLECTION</span>
               <h2>家具と設備</h2>
             </div>
-            <span className="collection-count">{project.furniture.length}</span>
+            <div className="panel-heading-actions">
+              <span className="collection-count">
+                {project.furniture.length}
+              </span>
+              <button
+                className="icon-button"
+                aria-label="家具パネルを閉じる"
+                onClick={() => closePanel("library")}
+              >
+                <Icon name="close" size={18} />
+              </button>
+            </div>
           </div>
           <div className="side-tabs">
             <button
@@ -771,6 +934,10 @@ export default function Planner() {
                   onClick={() => {
                     setTool(kind);
                     setMode("2d");
+                    if (overlayPanels) setLibraryOpen(false);
+                    setNotice(
+                      `${f.name}を置く位置を図面でクリック・タップしてください。`,
+                    );
                   }}
                 >
                   <Icon name={kind} size={27} />
@@ -792,31 +959,73 @@ export default function Planner() {
         </aside>
         <main className="editor-panel">
           <div className="editor-header">
-            <div>
-              <span className="eyebrow">FLOOR PLAN</span>
-              <h1>間取りをデザイン</h1>
-            </div>
-            <div className="view-switch">
+            <div className="workspace-navigation" aria-label="編集画面の表示">
               <button
-                className={mode === "2d" ? "active" : ""}
-                onClick={() => setMode("2d")}
+                id="library-toggle"
+                className="workspace-button"
+                aria-controls="library-panel"
+                aria-expanded={libraryOpen}
+                onClick={() => togglePanel("library")}
               >
-                <Icon name="plan" size={17} />
-                2D
+                <Icon name="sofa" size={18} />
+                <span>家具・設備</span>
               </button>
               <button
-                className={mode === "3d" ? "active" : ""}
-                onClick={() => {
-                  setMode("3d");
-                  setTool("select");
-                }}
+                id="details-toggle"
+                className="workspace-button"
+                aria-controls="details-panel"
+                aria-expanded={detailsOpen}
+                onClick={() => togglePanel("details")}
               >
-                <Icon name="box" size={17} />
-                3D
+                <Icon name="settings" size={18} />
+                <span>設定</span>
+              </button>
+            </div>
+            <h1 className="editor-title">間取り編集</h1>
+            <div className="editor-view-actions">
+              <div className="view-switch">
+                <button
+                  className={mode === "2d" ? "active" : ""}
+                  onClick={() => setMode("2d")}
+                >
+                  <Icon name="plan" size={17} />
+                  2D
+                </button>
+                <button
+                  className={mode === "3d" ? "active" : ""}
+                  onClick={() => {
+                    setMode("3d");
+                    setTool("select");
+                  }}
+                >
+                  <Icon name="box" size={17} />
+                  3D
+                </button>
+              </div>
+              {focusMode && (
+                <button
+                  aria-label="保存"
+                  className="workspace-button focus-save"
+                  onClick={save}
+                  title="JSONファイルに保存"
+                >
+                  <Icon name="download" size={18} />
+                  <span>保存</span>
+                </button>
+              )}
+              <button
+                aria-label={focusMode ? "通常表示に戻す" : "広く使う"}
+                className="workspace-button focus-toggle"
+                aria-pressed={focusMode}
+                title="編集画面を広く使う（F）・Escで戻る"
+                onClick={toggleFocus}
+              >
+                <Icon name={focusMode ? "collapse" : "expand"} size={18} />
+                <span>{focusMode ? "通常表示に戻す" : "広く使う"}</span>
               </button>
             </div>
           </div>
-          <div className="toolbar">
+          <div className={`toolbar ${mode === "3d" ? "toolbar-3d" : ""}`}>
             <div className="drawing-tools">
               {toolList.map((t) => (
                 <button
@@ -858,6 +1067,24 @@ export default function Planner() {
             </div>
           </div>
           <div className={`canvas-wrap tool-${tool}`}>
+            {selection && !detailsOpen && (
+              <button
+                className="selection-edit"
+                onClick={() => togglePanel("details")}
+              >
+                <Icon name="settings" size={17} />
+                <span>
+                  {selectedItem?.name ||
+                    (selectedWall
+                      ? "選択中の壁"
+                      : (selectedRoom
+                          ? roomLabel(selectedRoom)?.name
+                          : undefined) || "選択中の部屋")}
+                </span>
+                <strong>寸法を編集</strong>
+                <Icon name="chevron" size={15} />
+              </button>
+            )}
             {mode === "2d" ? (
               <svg
                 ref={svg}
@@ -1089,7 +1316,7 @@ export default function Planner() {
                   {tool === "wall"
                     ? "ドラッグで壁を描く · 壁を選択して寸法を指定"
                     : tool === "select"
-                      ? "家具をドラッグで移動 · Alt＋ドラッグで画面を移動"
+                      ? "家具をドラッグで移動 · 右ドラッグで画面を移動"
                       : tool === "pan"
                         ? "ドラッグで画面を移動"
                         : `${fixtureDefaults[tool].name}を置く位置をクリック`}
@@ -1170,20 +1397,26 @@ export default function Planner() {
             </span>
           </footer>
         </main>
-        <aside className="properties-panel">
+        <aside
+          id="details-panel"
+          className="properties-panel"
+          aria-label="寸法と表示設定"
+          hidden={!detailsOpen}
+          role={overlayPanels ? "dialog" : undefined}
+          aria-modal={overlayPanels && detailsOpen ? true : undefined}
+        >
           <div className="panel-heading">
             <div>
               <span className="eyebrow">DETAILS</span>
               <h2>{selection ? "選択中のアイテム" : "間取りの設定"}</h2>
             </div>
-            <Icon
-              name={
-                selectedWall
-                  ? "wall"
-                  : selectedItem?.kind || selectedItem?.shape || "plan"
-              }
-              size={20}
-            />
+            <button
+              className="icon-button"
+              aria-label="設定パネルを閉じる"
+              onClick={() => closePanel("details")}
+            >
+              <Icon name="close" size={18} />
+            </button>
           </div>
           {selectedItem ? (
             <div className="property-content">
@@ -1698,6 +1931,12 @@ export default function Planner() {
                 </p>
               </li>
               <li>
+                <strong>図面を広く使う</strong>
+                <p>
+                  「広く使う」またはFキーでヘッダーとパネルを隠します。家具・設定は上のボタンで開けます。通常表示へ戻すには同じボタン、Fキー、またはEscキー。スマホでは必要なパネルだけ開き、配置したら図面へ戻ります。
+                </p>
+              </li>
+              <li>
                 <strong>3Dで確かめる</strong>
                 <p>
                   3Dで回転・拡大して配置を確認。保存ボタンでJSONに書き出すと、別の端末でも読み込めます。
@@ -1705,7 +1944,7 @@ export default function Planner() {
               </li>
             </ol>
             <p className="property-note">
-              Alt＋ドラッグ：画面移動 / ホイール：拡大縮小 / Ctrl＋Z：元に戻す /
+              右ドラッグ：画面移動 / ホイール：拡大縮小 / Ctrl＋Z：元に戻す /
               Delete：削除。図面は配置検討用です。内寸と内寸面積を表示します。
             </p>
             <button className="primary-button" onClick={() => setHelp(false)}>
