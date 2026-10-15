@@ -3,10 +3,12 @@ import type { Item } from "../../packages/floorplan/model";
 export default function PlanItem({
   item: i,
   selected,
+  seeThrough = false,
   onPointerDown,
 }: {
   item: Item;
   selected: boolean;
+  seeThrough?: boolean;
   onPointerDown: React.PointerEventHandler<SVGGElement>;
 }) {
   const w = i.width,
@@ -17,11 +19,15 @@ export default function PlanItem({
       transform={`translate(${i.x} ${i.y}) rotate(${i.rotation})`}
       onPointerDown={onPointerDown}
       className="plan-item"
+      fillOpacity={!i.kind && seeThrough ? 0.4 : 1}
       role="button"
       aria-label={i.name}
     >
       <title>
         {i.name} · {w} × {d} × {i.height} cm
+        {i.kind === "window"
+          ? ` · 下端は床から${i.baseElevation ?? 90} cm`
+          : ""}
       </title>
       {selected && (
         <rect
@@ -67,15 +73,15 @@ export default function PlanItem({
         <g>
           <rect
             x={-w / 2}
-            y="-6"
+            y={-d / 2}
             width={w}
-            height="12"
+            height={d}
             fill="#e0eff0"
             stroke="#6c9ba3"
             strokeWidth="2"
           />
           <path
-            d={`M${-w / 2} 0 h${w} M0 -6 v12`}
+            d={`M${-w / 2} 0 h${w} M0 ${-d / 2} v${d}`}
             stroke="#6c9ba3"
             strokeWidth="1.5"
           />

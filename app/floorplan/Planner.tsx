@@ -1,4 +1,13 @@
 import {
+  furnitureCallouts,
+  annotationBounds,
+} from "../../packages/floorplan/annotations";
+import FurnitureCallouts from "./FurnitureCallouts";
+import {
+  openingPlacement,
+  setOpeningGap,
+  resizeOpeningWidth,
+  windowElevation,
   interiorRoom,
   resizeRoomInterior,
   wallInsets,
@@ -14,6 +23,8 @@ import {
   useState,
 } from "react";
 import {
+  translateDimensionNote,
+  addDimensionNote,
   addWall,
   bounds,
   demoProject,
@@ -37,20 +48,24 @@ import {
 } from "../../packages/floorplan/model";
 import Icon, { type IconName } from "./Icons";
 import PlanItem from "./PlanItem";
+import WindowDimensions from "./WindowDimensions";
+import DimensionMemo from "./DimensionMemo";
 const Scene3D = lazy(() => import("./Scene3D"));
-type Tool = "select" | "wall" | "pan" | FixtureKind;
+type Tool = "select" | "wall" | "pan" | "measure" | FixtureKind;
 type Selection =
-  | { type: "item" | "wall"; id: string }
+  | { type: "item" | "wall" | "dimension"; id: string }
   | { type: "room"; index: number }
   | null;
 type View = { x: number; y: number; width: number; height: number };
 type Gesture =
   | { type: "item"; before: Project; id: string; offset: Point }
+  | { type: "dimension"; before: Project; id: string; offset: Point }
   | { type: "wall"; start: Point }
   | { type: "pan"; screen: Point; view: View; scale: number };
 const toolList: { id: Tool; icon: IconName; label: string; key?: string }[] = [
   { id: "select", icon: "cursor", label: "選択", key: "V" },
   { id: "wall", icon: "wall", label: "壁を描く", key: "W" },
+  { id: "measure", icon: "ruler", label: "寸法メモ", key: "M" },
   { id: "door", icon: "door", label: "ドア" },
   { id: "sliding", icon: "sliding", label: "引き戸" },
   { id: "window", icon: "window", label: "窓" },
@@ -90,18 +105,56 @@ export default function Planner() {
   const [notice, setNotice] = useState(initial.error);
   const [saveStatus, setSaveStatus] = useState("端末内に保存");
   const [tool, setTool] = useState<Tool>("select");
+  const [measureDraft, setMeasureDraft] = useState<{
+    a: Point;
+    b: Point;
+  } | null>(null);
+  const chooseTool = useCallback((next: Tool) => {
+    setTool(next);
+    setMeasureDraft(null);
+  }, []);
   const [selection, setSelection] = useState<Selection>(null);
   const [mode, setMode] = useState<"2d" | "3d">("2d");
   const [grid, setGrid] = useState(true),
     [snapping, setSnapping] = useState(true),
     [dimensions, setDimensions] = useState(true),
     [cutaway, setCutaway] = useState(true);
-  const [view, setView] = useState<View>({
-    x: -120,
-    y: -120,
-    width: 1140,
-    height: 890,
+  const [viewPreferences] = useState(() => {
+    try {
+      const value = JSON.parse(localStorage.getItem("madori.view.v1") || "{}");
+      return value && typeof value === "object" ? value : {};
+    } catch {
+      return {};
+    }
   });
+  const [seeThrough, setSeeThrough] = useState(
+    viewPreferences.seeThrough !== false,
+  );
+  const [showFurnitureNames, setShowFurnitureNames] = useState(
+    viewPreferences.showFurnitureNames === true,
+  );
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        "madori.view.v1",
+        JSON.stringify({ seeThrough, showFurnitureNames }),
+      );
+    } catch {
+      /* Display settings are optional; project saving reports its own errors. */
+    }
+  }, [seeThrough, showFurnitureNames]);
+  const callouts = useMemo(
+    () => (showFurnitureNames ? furnitureCallouts(project) : []),
+    [project, showFurnitureNames],
+  );
+  const toggleFurnitureNames = () => {
+    const next = !showFurnitureNames;
+    setShowFurnitureNames(next);
+    if (next) setView(annotationBounds(project, furnitureCallouts(project)));
+  };
+  const [view, setView] = useState<View>(() =>
+    annotationBounds(initial.project, callouts),
+  );
   const [canvasSize, setCanvasSize] = useState({ width: 700, height: 450 });
   const [draft, setDraft] = useState<{ a: Point; b: Point } | null>(null);
   const [search, setSearch] = useState(""),
@@ -208,6 +261,15 @@ export default function Planner() {
     selection?.type === "item"
       ? project.items.find((i) => i.id === selection.id)
       : undefined;
+  const selectedDimension =
+    selection?.type === "dimension"
+      ? project.dimensions.find((d) => d.id === selection.id)
+      : undefined;
+  const selectedWindow =
+    selectedItem?.kind === "window" ? selectedItem : undefined;
+  const windowPlacement = selectedWindow
+    ? openingPlacement(project, selectedWindow)
+    : null;
   const selectedWall =
     selection?.type === "wall"
       ? project.walls.find((w) => w.id === selection.id)
@@ -254,6 +316,8 @@ export default function Planner() {
   const remove = useCallback(() => {
     if (!selection) return;
     change((p) => {
+      if (selection.type === "dimension")
+        p.dimensions = p.dimensions.filter((d) => d.id !== selection.id);
       if (selection.type === "item")
         p.items = p.items.filter((i) => i.id !== selection.id);
       else if (selection.type === "wall")
@@ -262,7 +326,7 @@ export default function Planner() {
     setSelection(null);
   }, [selection, change]);
   const fit = useCallback(() => {
-    const b = bounds(project),
+    const b = annotationBounds(project, callouts),
       rect = svg.current?.getBoundingClientRect();
     const aspect = rect ? rect.width / rect.height : 1.3;
     const width = Math.max(b.width, b.height * aspect),
@@ -273,7 +337,7 @@ export default function Planner() {
       width,
       height,
     });
-  }, [project]);
+  }, [project, callouts]);
   useEffect(() => {
     if (blocked) return;
     const timer = setTimeout(() => {
@@ -411,10 +475,10 @@ export default function Planner() {
           return;
         }
         const g = gesture.current;
-        if (g?.type === "item") setProject(g.before);
+        if (g?.type === "item" || g?.type === "dimension") setProject(g.before);
         gesture.current = null;
         setDraft(null);
-        setTool("select");
+        chooseTool("select");
         setSelection(null);
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
@@ -439,8 +503,10 @@ export default function Planner() {
         e.preventDefault();
         toggleFocus();
       }
-      if (e.key.toLowerCase() === "v") setTool("select");
-      if (e.key.toLowerCase() === "w") setTool("wall");
+      if (e.key.toLowerCase() === "v") chooseTool("select");
+      if (e.key.toLowerCase() === "w") chooseTool("wall");
+      if (e.key.toLowerCase() === "m" && !e.ctrlKey && !e.metaKey && !e.altKey)
+        chooseTool("measure");
       if (e.key.toLowerCase() === "r" && selectedItem)
         change((p) => {
           p.items.find((i) => i.id === selectedItem.id)!.rotation =
@@ -459,6 +525,7 @@ export default function Planner() {
     help,
     focusMode,
     toggleFocus,
+    chooseTool,
     overlayPanels,
     libraryOpen,
     detailsOpen,
@@ -490,6 +557,26 @@ export default function Planner() {
       };
       return;
     }
+    if (tool === "measure") {
+      if (!measureDraft) setMeasureDraft({ a: point, b: point });
+      else {
+        if (distance(measureDraft.a, point) < 1) {
+          setNotice("少し離れた2点を指定してください。");
+          return;
+        }
+        let id = "";
+        change((p) => {
+          id = addDimensionNote(p, measureDraft.a, point).id;
+        });
+        setSelection({ type: "dimension", id });
+        chooseTool("select");
+        if (!compact && !focusMode) setDetailsOpen(true);
+        setNotice(
+          "寸法メモを追加しました。「寸法を編集」または設定から実測値とメモを入力できます。",
+        );
+      }
+      return;
+    }
     if (tool === "wall") {
       gesture.current = { type: "wall", start: point };
       setDraft({ a: point, b: point });
@@ -502,13 +589,15 @@ export default function Planner() {
         id = placeFixture(p, tool as FixtureKind, point).id;
       });
       setSelection({ type: "item", id });
-      setTool("select");
+      chooseTool("select");
       return;
     }
     setSelection(null);
   }
   function pointerMove(e: React.PointerEvent<SVGSVGElement>) {
     const g = gesture.current;
+    if (tool === "measure" && measureDraft && !g)
+      setMeasureDraft({ ...measureDraft, b: snapped(world(e)) });
     if (!g) return;
     if (g.type === "wall") {
       setDraft({ a: g.start, b: snapped(world(e)) });
@@ -518,6 +607,18 @@ export default function Planner() {
         ...g.view,
         x: g.view.x - (e.clientX - g.screen.x) / g.scale,
         y: g.view.y - (e.clientY - g.screen.y) / g.scale,
+      });
+    }
+    if (g.type === "dimension") {
+      const pt = world(e),
+        original = g.before.dimensions.find((d) => d.id === g.id)!;
+      const dx = snap(pt.x - g.offset.x, snapping),
+        dy = snap(pt.y - g.offset.y, snapping);
+      setProject({
+        ...g.before,
+        dimensions: g.before.dimensions.map((d) =>
+          d.id === g.id ? translateDimensionNote(original, dx, dy) : d,
+        ),
       });
     }
     if (g.type === "item") {
@@ -546,7 +647,7 @@ export default function Planner() {
       if (distance(g.start, pt) >= 10) change((p) => addWall(p, g.start, pt));
     }
     if (
-      g?.type === "item" &&
+      (g?.type === "item" || g?.type === "dimension") &&
       JSON.stringify(g.before) !== JSON.stringify(project)
     )
       remember(g.before);
@@ -579,12 +680,16 @@ export default function Planner() {
       });
     });
     setSelection({ type: "item", id });
-    setTool("select");
+    chooseTool("select");
     setMode("2d");
     if (overlayPanels) setLibraryOpen(false);
     setNotice(`${f.name}を配置しました。ドラッグで位置を調整できます。`);
   }
   function setItem(key: string, value: string | number) {
+    if (selectedItem?.kind === "window" && key === "width") {
+      change((p) => resizeOpeningWidth(p, selectedItem.id, Number(value)));
+      return;
+    }
     if (selectedItem)
       change((p) =>
         Object.assign(
@@ -633,12 +738,12 @@ export default function Planner() {
     setBlocked(false);
     setMode("2d");
     setView(bounds(p));
-    setTool(demo ? "select" : "wall");
+    chooseTool(demo ? "select" : "wall");
   }
   function exportSvg() {
     if (!svg.current) return;
     const copy = svg.current.cloneNode(true) as SVGSVGElement;
-    const b = bounds(project);
+    const b = annotationBounds(project, callouts);
     copy.setAttribute("viewBox", `${b.x} ${b.y} ${b.width} ${b.height}`);
     copy.setAttribute("width", String(b.width));
     copy.setAttribute("height", String(b.height));
@@ -648,7 +753,8 @@ export default function Planner() {
       "style",
     );
     style.textContent =
-      ".room-name{font:500 15px sans-serif;fill:#596957}.room-area{font:12px sans-serif;fill:#7c8478}.dim-label{font:12px sans-serif;fill:#6e766a;paint-order:stroke;stroke:#f7f5ee;stroke-width:6}.dim-line{stroke:#a6ab9d;stroke-width:1}";
+      ".room-name{font:500 15px sans-serif;fill:#596957;paint-order:stroke;stroke:#f7f7f2;stroke-width:3}.room-area{font:12px sans-serif;fill:#7c8478;paint-order:stroke;stroke:#f7f7f2;stroke-width:3}.dim-label{font:12px sans-serif;fill:#6e766a;paint-order:stroke;stroke:#f7f5ee;stroke-width:6}.dim-line{stroke:#a6ab9d;stroke-width:1}";
+    copy.querySelectorAll("[data-editor-only]").forEach((el) => el.remove());
     copy.prepend(style);
     download(
       new Blob([new XMLSerializer().serializeToString(copy)], {
@@ -932,7 +1038,7 @@ export default function Planner() {
                   key={kind}
                   className={tool === kind ? "active" : ""}
                   onClick={() => {
-                    setTool(kind);
+                    chooseTool(kind);
                     setMode("2d");
                     if (overlayPanels) setLibraryOpen(false);
                     setNotice(
@@ -995,7 +1101,7 @@ export default function Planner() {
                   className={mode === "3d" ? "active" : ""}
                   onClick={() => {
                     setMode("3d");
-                    setTool("select");
+                    chooseTool("select");
                   }}
                 >
                   <Icon name="box" size={17} />
@@ -1036,7 +1142,7 @@ export default function Planner() {
                   className={tool === t.id ? "active" : ""}
                   disabled={mode === "3d"}
                   onClick={() => {
-                    setTool(t.id);
+                    chooseTool(t.id);
                     setSelection(null);
                   }}
                 >
@@ -1046,6 +1152,28 @@ export default function Planner() {
                   )}
                 </button>
               ))}
+            </div>
+            <div className="display-tools" aria-label="2Dの表示切替">
+              <button
+                aria-label="家具を半透明にする"
+                title="家具を半透明にする"
+                aria-pressed={seeThrough}
+                className={seeThrough ? "active" : ""}
+                onClick={() => setSeeThrough(!seeThrough)}
+              >
+                <Icon name="layers" size={18} />
+                <span>透過</span>
+              </button>
+              <button
+                aria-label="家具名を図面の外に表示"
+                title="家具名を図面の外に表示"
+                aria-pressed={showFurnitureNames}
+                className={showFurnitureNames ? "active" : ""}
+                onClick={toggleFurnitureNames}
+              >
+                <Icon name="label" size={18} />
+                <span>家具名</span>
+              </button>
             </div>
             <div className="history-tools">
               <button
@@ -1074,12 +1202,14 @@ export default function Planner() {
               >
                 <Icon name="settings" size={17} />
                 <span>
-                  {selectedItem?.name ||
-                    (selectedWall
-                      ? "選択中の壁"
-                      : (selectedRoom
-                          ? roomLabel(selectedRoom)?.name
-                          : undefined) || "選択中の部屋")}
+                  {selectedDimension
+                    ? "寸法メモ"
+                    : selectedItem?.name ||
+                      (selectedWall
+                        ? "選択中の壁"
+                        : (selectedRoom
+                            ? roomLabel(selectedRoom)?.name
+                            : undefined) || "選択中の部屋")}
                 </span>
                 <strong>寸法を編集</strong>
                 <Icon name="chevron" size={15} />
@@ -1095,7 +1225,8 @@ export default function Planner() {
                 onPointerUp={pointerUp}
                 onPointerCancel={() => {
                   const g = gesture.current;
-                  if (g?.type === "item") setProject(g.before);
+                  if (g?.type === "item" || g?.type === "dimension")
+                    setProject(g.before);
                   gesture.current = null;
                   setDraft(null);
                 }}
@@ -1165,22 +1296,6 @@ export default function Planner() {
                         points={r.points.map((p) => `${p.x},${p.y}`).join(" ")}
                         fill="url(#floor-grain)"
                       />
-                      <text
-                        x={r.center.x}
-                        y={r.center.y - 4}
-                        textAnchor="middle"
-                        className="room-name"
-                      >
-                        {label?.name || `部屋 ${index + 1}`}
-                      </text>
-                      <text
-                        x={r.center.x}
-                        y={r.center.y + 16}
-                        textAnchor="middle"
-                        className="room-area"
-                      >
-                        {interiorRoom(project, r).area.toFixed(1)} m²
-                      </text>
                     </g>
                   );
                 })}
@@ -1264,9 +1379,67 @@ export default function Planner() {
                     key={i.id}
                     item={i}
                     selected={selectedItem?.id === i.id}
+                    seeThrough={seeThrough}
                     onPointerDown={(e) => selectItem(e, i.id)}
                   />
                 ))}
+                {roomList.map((r, index) => (
+                  <g key={`room-caption-${index}`} pointerEvents="none">
+                    <text
+                      x={r.center.x}
+                      y={r.center.y - 4}
+                      textAnchor="middle"
+                      className="room-name"
+                    >
+                      {roomLabel(r)?.name || `部屋 ${index + 1}`}
+                    </text>
+                    <text
+                      x={r.center.x}
+                      y={r.center.y + 16}
+                      textAnchor="middle"
+                      className="room-area"
+                    >
+                      {interiorRoom(project, r).area.toFixed(1)} m²
+                    </text>
+                  </g>
+                ))}
+                {showFurnitureNames && <FurnitureCallouts entries={callouts} />}
+                {project.dimensions.map((d) => (
+                  <DimensionMemo
+                    key={d.id}
+                    entry={d}
+                    selected={selectedDimension?.id === d.id}
+                    onPointerDown={(e) => {
+                      if (tool !== "select" || e.altKey || e.button !== 0)
+                        return;
+                      e.stopPropagation();
+                      setSelection({ type: "dimension", id: d.id });
+                      gesture.current = {
+                        type: "dimension",
+                        before: project,
+                        id: d.id,
+                        offset: world(e),
+                      };
+                      svg.current?.setPointerCapture(e.pointerId);
+                    }}
+                  />
+                ))}
+                {tool === "measure" && measureDraft && (
+                  <DimensionMemo
+                    entry={{
+                      id: "draft",
+                      ...measureDraft,
+                      note: "2点目をクリック・タップ",
+                    }}
+                    selected={false}
+                  />
+                )}
+                {selectedWindow && windowPlacement && (
+                  <WindowDimensions
+                    item={selectedWindow}
+                    placement={windowPlacement}
+                  />
+                )}
                 {draft && (
                   <g pointerEvents="none">
                     <line
@@ -1315,11 +1488,15 @@ export default function Planner() {
                 <div className="canvas-instruction">
                   {tool === "wall"
                     ? "ドラッグで壁を描く · 壁を選択して寸法を指定"
-                    : tool === "select"
-                      ? "家具をドラッグで移動 · 右ドラッグで画面を移動"
-                      : tool === "pan"
-                        ? "ドラッグで画面を移動"
-                        : `${fixtureDefaults[tool].name}を置く位置をクリック`}
+                    : tool === "measure"
+                      ? measureDraft
+                        ? "2点目をクリック・タップして寸法メモを追加"
+                        : "1点目をクリック・タップ · 次に2点目を指定"
+                      : tool === "select"
+                        ? "家具をドラッグで移動 · 右ドラッグで画面を移動"
+                        : tool === "pan"
+                          ? "ドラッグで画面を移動"
+                          : `${fixtureDefaults[tool].name}を置く位置をクリック`}
                 </div>
                 <div className="zoom-controls">
                   <button
@@ -1371,7 +1548,9 @@ export default function Planner() {
                     className={tool === "pan" ? "active" : ""}
                     aria-label="画面を移動"
                     title="画面を移動"
-                    onClick={() => setTool(tool === "pan" ? "select" : "pan")}
+                    onClick={() =>
+                      chooseTool(tool === "pan" ? "select" : "pan")
+                    }
                   >
                     <Icon name="cursor" size={18} />
                   </button>
@@ -1418,7 +1597,79 @@ export default function Planner() {
               <Icon name="close" size={18} />
             </button>
           </div>
-          {selectedItem ? (
+          {selectedDimension ? (
+            <div className="property-content">
+              <h3 className="section-label">寸法メモ</h3>
+              <p className="property-note">
+                図面の長さ：
+                {Number(
+                  distance(selectedDimension.a, selectedDimension.b).toFixed(1),
+                )}{" "}
+                cm。実測値を登録しても壁や家具は動きません。
+              </p>
+              <NumberField
+                key={`${selectedDimension.id}-value`}
+                label="実測値"
+                commitUnchanged
+                value={
+                  selectedDimension.value ??
+                  distance(selectedDimension.a, selectedDimension.b)
+                }
+                unit="cm"
+                min={0.1}
+                max={20000}
+                onChange={(v) =>
+                  change((p) => {
+                    p.dimensions.find(
+                      (d) => d.id === selectedDimension.id,
+                    )!.value = v;
+                  })
+                }
+              />
+              <p className="property-note">
+                {selectedDimension.value === undefined
+                  ? "実測値は未登録です。現在は図面から計算した値を表示しています。"
+                  : "登録した実測値を表示しています。"}
+              </p>
+              <label className="field">
+                メモ
+                <textarea
+                  rows={4}
+                  maxLength={200}
+                  placeholder="例：窓下の空間／通路幅を確保"
+                  value={selectedDimension.note}
+                  onChange={(e) =>
+                    change((p) => {
+                      p.dimensions.find(
+                        (d) => d.id === selectedDimension.id,
+                      )!.note = e.target.value;
+                    })
+                  }
+                />
+              </label>
+              {selectedDimension.value !== undefined && (
+                <button
+                  className="wide-button"
+                  onClick={() =>
+                    change((p) => {
+                      delete p.dimensions.find(
+                        (d) => d.id === selectedDimension.id,
+                      )!.value;
+                    })
+                  }
+                >
+                  実測値を消して図面の長さを表示
+                </button>
+              )}
+              <p className="property-note">
+                図面上でドラッグしてメモ全体を移動できます。2D専用のメモです。壁や家具を変更しても、この2点の位置は自動では変わりません。
+              </p>
+              <button className="wide-button danger" onClick={remove}>
+                <Icon name="trash" size={17} />
+                寸法メモを削除
+              </button>
+            </div>
+          ) : selectedItem ? (
             <div className="property-content">
               <div className="selected-object">
                 <div style={{ color: selectedItem.color }}>
@@ -1440,7 +1691,9 @@ export default function Planner() {
                   onChange={(e) => setItem("name", e.target.value)}
                 />
               </label>
-              <h3 className="section-label">サイズ</h3>
+              <h3 className="section-label">
+                {selectedWindow ? "窓のサイズ" : "サイズ"}
+              </h3>
               <div className="dimension-fields">
                 {[
                   ["width", "幅"],
@@ -1449,7 +1702,15 @@ export default function Planner() {
                 ].map(([key, label]) => (
                   <NumberField
                     key={`${selectedItem.id}-${key}`}
-                    label={label}
+                    label={
+                      selectedWindow
+                        ? ({
+                            width: "窓の幅",
+                            depth: "見込み",
+                            height: "窓の高さ",
+                          }[key] ?? label)
+                        : label
+                    }
                     value={selectedItem[key as "width"]}
                     unit="cm"
                     min={1}
@@ -1458,6 +1719,91 @@ export default function Planner() {
                   />
                 ))}
               </div>
+              {selectedWindow && (
+                <section
+                  className="window-properties"
+                  aria-label="窓の位置設定"
+                >
+                  <NumberField
+                    key={`${selectedWindow.id}-sill`}
+                    label="床から窓の下端まで"
+                    value={windowElevation(selectedWindow)}
+                    unit="cm"
+                    min={0}
+                    max={2000}
+                    onChange={(v) => setItem("baseElevation", v)}
+                  />
+                  <h3 className="section-label">壁から窓の端まで（内寸）</h3>
+                  {windowPlacement ? (
+                    <>
+                      <div className="dimension-fields two">
+                        <NumberField
+                          key={`${selectedWindow.id}-gap-a`}
+                          label={windowPlacement.labelA}
+                          value={windowPlacement.gapA}
+                          unit="cm"
+                          min={0}
+                          max={20000}
+                          onChange={(v) =>
+                            change((p) =>
+                              setOpeningGap(p, selectedWindow.id, "a", v),
+                            )
+                          }
+                        />
+                        <NumberField
+                          key={`${selectedWindow.id}-gap-b`}
+                          label={windowPlacement.labelB}
+                          value={windowPlacement.gapB}
+                          unit="cm"
+                          min={0}
+                          max={20000}
+                          onChange={(v) =>
+                            change((p) =>
+                              setOpeningGap(p, selectedWindow.id, "b", v),
+                            )
+                          }
+                        />
+                      </div>
+                      <p className="property-note">
+                        壁の内側から窓の端までの距離です。窓の中心までではありません。片側を入力すると反対側も更新されます。幅の変更時は
+                        {windowPlacement.labelA.replace("から", "")}
+                        側の距離を保ちます。
+                      </p>
+                      <p className="property-note">
+                        壁区間の内寸：
+                        {Number(windowPlacement.available.toFixed(1))} cm ／
+                        窓の上端：
+                        {Number(
+                          (
+                            windowElevation(selectedWindow) +
+                            selectedWindow.height
+                          ).toFixed(1),
+                        )}{" "}
+                        cm
+                      </p>
+                      {(windowPlacement.gapA < -0.01 ||
+                        windowPlacement.gapB < -0.01) && (
+                        <p className="window-warning">
+                          窓が壁区間をはみ出しています。幅または壁からの距離を調整してください。
+                        </p>
+                      )}
+                      {windowElevation(selectedWindow) + selectedWindow.height >
+                        windowPlacement.wall.height && (
+                        <p className="window-warning">
+                          窓の上端が壁の高さを超えています。窓の高さ・下端の位置、または壁の高さを確認してください。
+                        </p>
+                      )}
+                      <p className="property-note">
+                        途中で分かれた壁は、選択した窓がある壁区間を基準にします。図面のA・Bで測る端を確認できます。
+                      </p>
+                    </>
+                  ) : (
+                    <p className="property-note">
+                      窓を壁の近くへドラッグして沿わせると、壁からの距離を入力できます。
+                    </p>
+                  )}
+                </section>
+              )}
               {selectedItem.kind === "door" && (
                 <>
                   <h3 className="section-label">ドアの開き方</h3>
@@ -1797,6 +2143,16 @@ export default function Planner() {
                   checked={dimensions}
                   onChange={setDimensions}
                 />
+                <Toggle
+                  label="家具を半透明にする"
+                  checked={seeThrough}
+                  onChange={setSeeThrough}
+                />
+                <Toggle
+                  label="家具名を図面の外に表示"
+                  checked={showFurnitureNames}
+                  onChange={toggleFurnitureNames}
+                />
               </>
             ) : (
               <Toggle
@@ -1931,6 +2287,12 @@ export default function Planner() {
                 </p>
               </li>
               <li>
+                <strong>寸法メモと家具の表示</strong>
+                <p>
+                  寸法メモ（M）で好きな2点を指定し、設定から実測値とメモを登録。ツールバーの「透過」で家具を半透明に、「家具名」で図面外への引き出し表示を切り替えます。
+                </p>
+              </li>
+              <li>
                 <strong>図面を広く使う</strong>
                 <p>
                   「広く使う」またはFキーでヘッダーとパネルを隠します。家具・設定は上のボタンで開けます。通常表示へ戻すには同じボタン、Fキー、またはEscキー。スマホでは必要なパネルだけ開き、配置したら図面へ戻ります。
@@ -1985,8 +2347,10 @@ function NumberField({
   min,
   max,
   onChange,
+  commitUnchanged = false,
 }: {
   label: string;
+  commitUnchanged?: boolean;
   value: number;
   unit: string;
   min: number;
@@ -1994,7 +2358,13 @@ function NumberField({
   onChange: (v: number) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
+  const cancelled = useRef(false);
   const commit = () => {
+    if (cancelled.current) {
+      cancelled.current = false;
+      setDraft(null);
+      return;
+    }
     const n = Number(draft);
     if (
       draft !== null &&
@@ -2002,7 +2372,7 @@ function NumberField({
       Number.isFinite(n) &&
       n >= min &&
       n <= max &&
-      n !== value
+      (n !== value || commitUnchanged)
     )
       onChange(n);
     setDraft(null);
@@ -2022,6 +2392,7 @@ function NumberField({
           onKeyDown={(e) => {
             if (e.key === "Enter") e.currentTarget.blur();
             if (e.key === "Escape") {
+              cancelled.current = true;
               setDraft(null);
               e.currentTarget.blur();
             }

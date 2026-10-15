@@ -57,8 +57,16 @@ export interface RoomLabel {
   name: string;
   color: string;
 }
+export interface DimensionNote {
+  id: string;
+  a: Point;
+  b: Point;
+  note: string;
+  value?: number;
+}
 export interface Project {
-  formatVersion: 2;
+  formatVersion: 3;
+  dimensions: DimensionNote[];
   dimensionBasis: "interior";
   name: string;
   nextId: number;
@@ -81,6 +89,12 @@ export const snap = (n: number, enabled: boolean) =>
 export function bounds(p: Project) {
   const points = [
     ...p.walls.flatMap((w) => [w.a, w.b]),
+    ...p.dimensions.flatMap((d) => {
+      const x = (d.a.x + d.b.x) / 2,
+        y = (d.a.y + d.b.y) / 2,
+        half = Math.max(80, Math.min(33, d.note.length) * 6.5);
+      return [d.a, d.b, { x: x - half, y: y - 25 }, { x: x + half, y: y + 25 }];
+    }),
     ...p.items.flatMap((i) => [
       { x: i.x - i.width, y: i.y - i.depth },
       { x: i.x + i.width, y: i.y + i.depth },
@@ -380,7 +394,8 @@ export function moveItem(p: Project, item: Item, point: Point) {
 }
 export function emptyProject(): Project {
   return {
-    formatVersion: 2,
+    formatVersion: 3,
+    dimensions: [],
     dimensionBasis: "interior",
     name: "新しい間取り",
     nextId: 1,
@@ -507,8 +522,8 @@ export function parseProject(text: string): Project {
   const p = JSON.parse(text);
   if (
     !p ||
-    ![1, 2].includes(p.formatVersion) ||
-    (p.formatVersion === 2 && p.dimensionBasis !== "interior")
+    ![1, 2, 3].includes(p.formatVersion) ||
+    (p.formatVersion >= 2 && p.dimensionBasis !== "interior")
   )
     throw new Error(
       "対応していない保存形式です。元のファイルは変更されません。",
@@ -587,10 +602,32 @@ export function parseProject(text: string): Project {
     )
   )
     throw new Error("寸法またはオブジェクトのデータが不正です。");
-  const ids = [...p.walls, ...p.items, ...p.furniture].map((v) => v.id);
+  if (
+    (p.formatVersion === 3 && !Array.isArray(p.dimensions)) ||
+    (p.dimensions !== undefined &&
+      (!Array.isArray(p.dimensions) ||
+        p.dimensions.length > 2000 ||
+        !p.dimensions.every(
+          (d: DimensionNote) =>
+            d &&
+            str(d.id) &&
+            point(d.a) &&
+            point(d.b) &&
+            distance(d.a, d.b) >= 1 &&
+            str(d.note) &&
+            (d.value === undefined || finite(d.value, 0.1, 20000)),
+        )))
+  )
+    throw new Error("寸法メモのデータが不正です。");
+  const ids = [
+    ...p.walls,
+    ...p.items,
+    ...p.furniture,
+    ...(p.dimensions ?? []),
+  ].map((v) => v.id);
   if (
     new Set(ids).size !== ids.length ||
-    ids.some((id) => /^[wif]\d+$/.test(id) && Number(id.slice(1)) >= p.nextId)
+    ids.some((id) => /^[wifm]\d+$/.test(id) && Number(id.slice(1)) >= p.nextId)
   )
     throw new Error("オブジェクトIDが重複または不正です。");
   // Version 1 geometry is retained; dimensions now measure the inner wall faces.
@@ -606,5 +643,43 @@ export function parseProject(text: string): Project {
         });
     });
   }
+  if (p.formatVersion === 2) {
+    p.formatVersion = 3;
+    p.dimensions ??= [];
+  }
   return p as Project;
+}
+
+export function addDimensionNote(p: Project, a: Point, b: Point) {
+  const valid = (v: Point) =>
+    Number.isFinite(v.x) &&
+    Number.isFinite(v.y) &&
+    Math.abs(v.x) <= 50000 &&
+    Math.abs(v.y) <= 50000;
+  if (!valid(a) || !valid(b) || distance(a, b) < 1)
+    throw new Error("寸法メモは1 cm以上離れた2点を指定してください。");
+  const entry: DimensionNote = {
+    id: `m${p.nextId++}`,
+    a: { ...a },
+    b: { ...b },
+    note: "",
+  };
+  p.dimensions.push(entry);
+  return entry;
+}
+
+export function translateDimensionNote(
+  entry: DimensionNote,
+  dx: number,
+  dy: number,
+): DimensionNote {
+  const a = { x: entry.a.x + dx, y: entry.a.y + dy },
+    b = { x: entry.b.x + dx, y: entry.b.y + dy };
+  if (
+    ![a.x, a.y, b.x, b.y].every(
+      (v) => Number.isFinite(v) && Math.abs(v) <= 50000,
+    )
+  )
+    return entry;
+  return { ...entry, a, b };
 }

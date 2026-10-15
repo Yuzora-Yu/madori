@@ -1673,3 +1673,100 @@ svg {
 .focus-mode .toolbar-3d {
   bottom: 12px;
 }
+
+.window-properties {
+  border-top: 1px solid #dfe7d6;
+  padding-top: 16px;
+}
+.window-properties .dimension-fields {
+  gap: 10px;
+}
+.window-warning {
+  font-size: 12px;
+  line-height: 1.7;
+  color: #9b5138;
+  background: #faf1e8;
+  padding: 10px;
+  border-radius: 6px;
+}
+
+.tool-measure .plan-canvas {
+  cursor: crosshair;
+}
+.tool-select .dimension-memo {
+  cursor: move;
+}
+.field textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 90px;
+  border: 1px solid #dde2d8;
+  border-radius: 6px;
+  padding: 10px;
+  margin-top: 7px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #39493c;
+  background: #fcfdf9;
+}
+.field textarea:focus {
+  outline: 2px solid #699c80;
+  outline-offset: 1px;
+}
+@media (max-width: 600px) {
+  .field textarea {
+    font-size: 16px;
+  }
+}
+
+.display-tools {
+  display: flex;
+  flex-shrink: 0;
+  gap: 3px;
+  border-left: 1px solid #e5e9df;
+  padding-left: 5px;
+}
+.toolbar .display-tools button span {
+  display: inline;
+}
+.toolbar-3d .display-tools {
+  display: none;
+}
+.toolbar-3d:not(:has(.history-tools button:enabled)) {
+  display: none;
+}
+.room-name,
+.room-area {
+  paint-order: stroke;
+  stroke: #f7f7f2;
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+@media (max-width: 600px) {
+  .toolbar:not(.toolbar-3d) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .toolbar .drawing-tools {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .toolbar .history-tools {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .toolbar .display-tools {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: flex-end;
+    border-left: 0;
+    border-top: 1px solid #e5e9df;
+    padding: 4px 0 0;
+  }
+  .toolbar .display-tools button {
+    width: auto;
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+}

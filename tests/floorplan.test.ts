@@ -1,4 +1,12 @@
 import {
+  furnitureCallouts,
+  annotationBounds,
+} from "../packages/floorplan/annotations";
+import {
+  openingPlacement,
+  setOpeningGap,
+  resizeOpeningWidth,
+  windowElevation,
   doorPose,
   shelfBoards,
   interiorRoom,
@@ -7,6 +15,8 @@ import {
 } from "../packages/floorplan/geometry";
 import { describe, expect, it } from "vitest";
 import {
+  translateDimensionNote,
+  addDimensionNote,
   addWall,
   demoProject,
   distance,
@@ -245,7 +255,7 @@ describe("interior measurements, doors and built-in shelves", () => {
       delete i.doorAngle;
     });
     const migrated = parseProject(JSON.stringify(old));
-    expect(migrated.formatVersion).toBe(2);
+    expect(migrated.formatVersion).toBe(3);
     expect(migrated.dimensionBasis).toBe("interior");
     expect(migrated.walls).toEqual(old.walls);
     expect(migrated.items.map((i) => [i.x, i.y, i.rotation])).toEqual(
@@ -260,4 +270,203 @@ it("retains decimal precision when entering wall dimensions", () => {
   addWall(p, { x: 0, y: 0 }, { x: 100, y: 0 });
   resizeWall(p, p.walls[0].id, 123.5);
   expect(distance(p.walls[0].a, p.walls[0].b)).toBeCloseTo(123.5, 8);
+});
+
+describe("window measurements from the interior wall face", () => {
+  it("measures to window edges and subtracts the adjoining walls", () => {
+    const p = rectangle();
+    p.walls[1].thickness = 20;
+    p.walls[3].thickness = 16;
+    const w = placeFixture(p, "window", { x: 200, y: 0 }),
+      m = openingPlacement(p, w)!;
+    expect(m.labelA).toBe("左の内壁から");
+    expect(m.labelB).toBe("右の内壁から");
+    expect(m.available).toBe(382);
+    expect(m.gapA).toBe(117);
+    expect(m.gapB).toBe(115);
+    expect(m.gapA + w.width + m.gapB).toBe(m.available);
+  });
+  it("keeps left and right reference sides stable when walls and windows are reversed", () => {
+    const p = rectangle(),
+      w = placeFixture(p, "window", { x: 150, y: 0 });
+    const before = openingPlacement(p, w)!;
+    const wall = p.walls[0];
+    [wall.a, wall.b] = [wall.b, wall.a];
+    w.rotation = 180;
+    const after = openingPlacement(p, w)!;
+    expect(after.start).toEqual(before.start);
+    expect(after.end).toEqual(before.end);
+    expect(after.gapA).toBeCloseTo(before.gapA);
+    expect(after.gapB).toBeCloseTo(before.gapB);
+  });
+  it("places vertical windows from the top or bottom using decimal distances", () => {
+    const p = rectangle(),
+      w = placeFixture(p, "window", { x: 400, y: 150 });
+    w.width = 80;
+    const m = openingPlacement(p, w)!;
+    expect(m.labelA).toBe("上の内壁から");
+    expect(m.labelB).toBe("下の内壁から");
+    setOpeningGap(p, w.id, "a", 23.5);
+    expect(w.x).toBe(400);
+    expect(w.y).toBeCloseTo(69.5);
+    expect(openingPlacement(p, w)!.gapA).toBeCloseTo(23.5);
+    setOpeningGap(p, w.id, "b", 40.25);
+    expect(w.y).toBeCloseTo(213.75);
+    expect(openingPlacement(p, w)!.gapB).toBeCloseTo(40.25);
+  });
+  it("changes window width while retaining the first inner gap and rejects overflow without mutation", () => {
+    const p = rectangle(),
+      w = placeFixture(p, "window", { x: 200, y: 0 });
+    setOpeningGap(p, w.id, "a", 50);
+    resizeOpeningWidth(p, w.id, 220.5);
+    expect(openingPlacement(p, w)!.gapA).toBeCloseTo(50);
+    expect(w.x).toBeCloseTo(166.25);
+    const before = structuredClone(p);
+    expect(() => resizeOpeningWidth(p, w.id, 350)).toThrow("収まりません");
+    expect(p).toEqual(before);
+    for (const gap of [-1, 300, NaN, Infinity]) {
+      expect(() => setOpeningGap(p, w.id, "b", gap)).toThrow();
+      expect(p).toEqual(before);
+    }
+  });
+  it("supports zero gaps and oblique aligned walls", () => {
+    const p = emptyProject();
+    addWall(p, { x: 0, y: 0 }, { x: 300, y: 400 });
+    const w = placeFixture(p, "window", { x: 150, y: 200 });
+    setOpeningGap(p, w.id, "a", 0);
+    expect(w.x).toBeCloseTo(45);
+    expect(w.y).toBeCloseTo(60);
+    expect(openingPlacement(p, w)!.labelA).toBe("A側の内壁から");
+    setOpeningGap(p, w.id, "b", 0);
+    expect(w.x).toBeCloseTo(255);
+    expect(w.y).toBeCloseTo(340);
+  });
+  it("requires wall alignment for relative offsets but allows standalone dimensions", () => {
+    const p = rectangle(),
+      w = placeFixture(p, "window", { x: 200, y: 150 });
+    expect(openingPlacement(p, w)).toBeNull();
+    expect(() => setOpeningGap(p, w.id, "a", 10)).toThrow("壁に沿わせて");
+    resizeOpeningWidth(p, w.id, 100);
+    expect(w.width).toBe(100);
+    expect(w.x).toBe(200);
+    w.x = 200;
+    w.y = 0;
+    w.rotation = 90;
+    expect(openingPlacement(p, w)).toBeNull();
+  });
+  it("persists exact position, size and elevation without changing the project format", () => {
+    const p = rectangle(),
+      w = placeFixture(p, "window", { x: 200, y: 0 });
+    expect(windowElevation(w)).toBe(90);
+    setOpeningGap(p, w.id, "a", 32.75);
+    resizeOpeningWidth(p, w.id, 145.5);
+    w.height = 125;
+    w.baseElevation = 65;
+    const restored = parseProject(JSON.stringify(p)),
+      copy = restored.items[0];
+    expect(restored).toEqual(p);
+    expect(openingPlacement(restored, copy)!.gapA).toBeCloseTo(32.75);
+    expect(windowElevation(copy)).toBe(65);
+    copy.baseElevation = 0;
+    expect(windowElevation(copy)).toBe(0);
+  });
+});
+
+describe("free dimension notes and furniture name leaders", () => {
+  it("stores measured values separately from drawn length without moving the plan", () => {
+    const p = rectangle(),
+      walls = structuredClone(p.walls),
+      items = structuredClone(p.items);
+    const d = addDimensionNote(p, { x: 20, y: 30 }, { x: 140, y: 30 });
+    d.value = 118.25;
+    d.note = "窓下・収納棚を置く";
+    expect(distance(d.a, d.b)).toBe(120);
+    expect(d.value).toBe(118.25);
+    expect(p.walls).toEqual(walls);
+    expect(p.items).toEqual(items);
+    expect(parseProject(JSON.stringify(p))).toEqual(p);
+  });
+  it("rejects invalid annotation fields and protects unsupported project formats", () => {
+    const p = rectangle(),
+      d = addDimensionNote(p, { x: 0, y: 0 }, { x: 100, y: 0 });
+    for (const bad of [
+      { value: -1 },
+      { value: 0 },
+      { note: "x".repeat(201) },
+      { a: { x: NaN, y: 0 } },
+      { b: { x: 0, y: 0 } },
+      { id: p.walls[0].id },
+    ]) {
+      const q = structuredClone(p);
+      Object.assign(q.dimensions[0], bad);
+      expect(() => parseProject(JSON.stringify(q))).toThrow();
+    }
+    expect(() =>
+      addDimensionNote(p, { x: NaN, y: 0 }, { x: 50, y: 0 }),
+    ).toThrow();
+    expect(() =>
+      addDimensionNote(p, { x: 0, y: 0 }, { x: 0.5, y: 0 }),
+    ).toThrow();
+    expect(p.dimensions).toHaveLength(1);
+    expect(d.id).toMatch(/^m/);
+    expect(() =>
+      parseProject(JSON.stringify({ ...p, dimensions: undefined })),
+    ).toThrow("寸法メモ");
+  });
+  it("explicitly upgrades version 2 without changing windows, rooms or furniture", () => {
+    const p = demoProject(),
+      legacy = { ...p, formatVersion: 2, dimensions: undefined };
+    const migrated = parseProject(JSON.stringify(legacy));
+    expect(migrated.formatVersion).toBe(3);
+    expect(migrated.dimensions).toEqual([]);
+    expect(migrated.walls).toEqual(p.walls);
+    expect(migrated.items).toEqual(p.items);
+    expect(migrated.labels).toEqual(p.labels);
+    expect(migrated.nextId).toBe(p.nextId);
+  });
+  it("places deterministic labels beyond outer walls without stacking labels at the same height", () => {
+    const p = demoProject();
+    p.items
+      .filter((i) => !i.kind)
+      .forEach((i) => {
+        i.x = 100;
+        i.y = 200;
+      });
+    const before = structuredClone(p),
+      labels = furnitureCallouts(p);
+    expect(labels).toHaveLength(6);
+    expect(labels.every((c) => c.side === "left" && c.x + c.width < 0)).toBe(
+      true,
+    );
+    for (let i = 1; i < labels.length; i++)
+      expect(labels[i].y - labels[i - 1].y).toBeGreaterThanOrEqual(34);
+    expect(furnitureCallouts(p)).toEqual(labels);
+    expect(p).toEqual(before);
+    const box = annotationBounds(p, labels);
+    expect(
+      labels.every(
+        (c) =>
+          c.x >= box.x &&
+          c.x + c.width <= box.x + box.width &&
+          c.y >= box.y &&
+          c.y <= box.y + box.height,
+      ),
+    ).toBe(true);
+  });
+});
+
+it("moves dimension notes without changing measured values and prevents invalid coordinates", () => {
+  const p = rectangle(),
+    d = addDimensionNote(p, { x: 30, y: 40 }, { x: 130, y: 40 });
+  d.value = 98;
+  d.note = "棚の幅";
+  const moved = translateDimensionNote(d, 10, -20);
+  expect(moved.a).toEqual({ x: 40, y: 20 });
+  expect(moved.b).toEqual({ x: 140, y: 20 });
+  expect(moved.value).toBe(98);
+  expect(moved.note).toBe(d.note);
+  expect(distance(moved.a, moved.b)).toBe(100);
+  expect(d.a).toEqual({ x: 30, y: 40 });
+  expect(translateDimensionNote(d, 50000, 0)).toBe(d);
+  expect(translateDimensionNote(d, NaN, 0)).toBe(d);
 });

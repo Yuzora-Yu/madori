@@ -1,6 +1,7 @@
 import {
   distance,
   inside,
+  projectOnWall,
   rooms,
   same,
   type Furniture,
@@ -273,4 +274,115 @@ export function resizeRoomInterior(
   p.walls = candidate.walls;
   p.items = candidate.items;
   p.labels = candidate.labels;
+}
+
+/** Inner faces of the adjoining walls to each opening edge, in a stable plan direction. */
+export function openingPlacement(p: Pick<Project, "walls">, item: Item) {
+  if (!item.kind || !["window", "door", "sliding"].includes(item.kind))
+    return null;
+  const nearest = p.walls
+    .map((wall) => ({ wall, hit: projectOnWall(item, wall) }))
+    .filter(
+      ({ wall, hit }) =>
+        hit.distance <= wall.thickness / 2 + 2 &&
+        Math.abs(
+          Math.sin(
+            (item.rotation * Math.PI) / 180 -
+              Math.atan2(wall.b.y - wall.a.y, wall.b.x - wall.a.x),
+          ),
+        ) < 0.02,
+    )
+    .sort(
+      (a, b) =>
+        a.hit.distance - b.hit.distance || a.wall.id.localeCompare(b.wall.id),
+    )[0];
+  if (!nearest) return null;
+  const { wall, hit } = nearest,
+    length = distance(wall.a, wall.b),
+    insets = wallInsets(p, wall);
+  const horizontal =
+    Math.abs(wall.b.x - wall.a.x) >= Math.abs(wall.b.y - wall.a.y);
+  const reversed = horizontal ? wall.a.x > wall.b.x : wall.a.y > wall.b.y;
+  const start = reversed ? wall.b : wall.a,
+    end = reversed ? wall.a : wall.b;
+  const insetA = reversed ? insets.end : insets.start,
+    insetB = reversed ? insets.start : insets.end;
+  const ux = (end.x - start.x) / length,
+    uy = (end.y - start.y) / length;
+  const center = (reversed ? 1 - hit.t : hit.t) * length;
+  const available = Math.max(0, length - insetA - insetB);
+  const gapA = center - item.width / 2 - insetA,
+    gapB = length - insetB - center - item.width / 2;
+  const diagonal = Math.abs(ux) > 0.01 && Math.abs(uy) > 0.01;
+  return {
+    wall,
+    start,
+    end,
+    ux,
+    uy,
+    length,
+    insetA,
+    insetB,
+    center,
+    available,
+    gapA,
+    gapB,
+    labelA: diagonal
+      ? "A側の内壁から"
+      : horizontal
+        ? "左の内壁から"
+        : "上の内壁から",
+    labelB: diagonal
+      ? "B側の内壁から"
+      : horizontal
+        ? "右の内壁から"
+        : "下の内壁から",
+  };
+}
+export function setOpeningGap(
+  p: Project,
+  id: string,
+  side: "a" | "b",
+  gap: number,
+) {
+  const item = p.items.find((i) => i.id === id),
+    placement = item && openingPlacement(p, item);
+  if (!item || !placement)
+    throw new Error(
+      "窓を壁の近くへドラッグし、壁に沿わせてから距離を入力してください。",
+    );
+  if (
+    !Number.isFinite(gap) ||
+    gap < 0 ||
+    gap + item.width > placement.available + 0.000001
+  )
+    throw new Error(
+      "窓が壁の内寸に収まりません。窓の幅か、端からの距離を小さくしてください。",
+    );
+  const center =
+    side === "a"
+      ? placement.insetA + gap + item.width / 2
+      : placement.length - placement.insetB - gap - item.width / 2;
+  item.x = placement.start.x + placement.ux * center;
+  item.y = placement.start.y + placement.uy * center;
+}
+export function resizeOpeningWidth(p: Project, id: string, width: number) {
+  const item = p.items.find((i) => i.id === id);
+  if (!item || !Number.isFinite(width) || width < 1 || width > 20000)
+    throw new Error("窓の幅は1〜20,000 cmで入力してください。");
+  const placement = openingPlacement(p, item);
+  if (placement) {
+    const gap = Math.max(0, placement.gapA);
+    if (gap + width > placement.available + 0.000001)
+      throw new Error(
+        "窓が壁の内寸に収まりません。幅を小さくするか、先に壁からの距離を調整してください。",
+      );
+    const center = placement.insetA + gap + width / 2;
+    item.x = placement.start.x + placement.ux * center;
+    item.y = placement.start.y + placement.uy * center;
+  }
+  item.width = width;
+}
+export function windowElevation(item: Item) {
+  return item.baseElevation ?? 90;
 }

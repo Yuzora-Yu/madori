@@ -1,4 +1,8 @@
-import { doorPose, shelfBoards } from "../../packages/floorplan/geometry";
+import {
+  doorPose,
+  shelfBoards,
+  windowElevation,
+} from "../../packages/floorplan/geometry";
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -34,7 +38,7 @@ export default function Scene3D({
     }
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#f2f1ec");
-    const box = bounds(project),
+    const box = bounds({ ...project, dimensions: [] }),
       cx = (box.x + box.width / 2) / 100,
       cz = (box.y + box.height / 2) / 100;
     const span = Math.max(box.width, box.height) / 100;
@@ -178,7 +182,10 @@ export default function Scene3D({
             0,
             "#f5f1e9",
           );
-        const low = opening.item.kind === "window" ? Math.min(0.9, h) : 0,
+        const low =
+            opening.item.kind === "window"
+              ? Math.min(windowElevation(opening.item) / 100, h)
+              : 0,
           high = Math.min(h, low + opening.item.height / 100);
         if (low > 0)
           boxMesh(
@@ -220,7 +227,11 @@ export default function Scene3D({
       const group = new THREE.Group();
       group.position.set(
         item.x / 100,
-        0.015 + (item.baseElevation ?? 0) / 100,
+        0.015 +
+          (item.kind === "window"
+            ? windowElevation(item)
+            : (item.baseElevation ?? 0)) /
+            100,
         item.y / 100,
       );
       group.rotation.y = (-item.rotation * Math.PI) / 180;
@@ -244,10 +255,10 @@ export default function Scene3D({
       }
       if (item.kind === "window") {
         if (!cutaway) {
-          add(w, 0.04, 0.06, 0, 0.9, 0, "#a4bbb9");
-          add(w, 0.04, 0.06, 0, 0.9 + h, 0, "#a4bbb9");
-          add(0.04, h, 0.06, 0, 0.9 + h / 2, 0, "#a4bbb9");
-          const pane = add(w, h, 0.015, 0, 0.9 + h / 2, 0, "#a6d1d8");
+          add(w, 0.04, d, 0, 0, 0, "#a4bbb9");
+          add(w, 0.04, d, 0, h, 0, "#a4bbb9");
+          add(0.04, h, d, 0, h / 2, 0, "#a4bbb9");
+          const pane = add(w, h, 0.015, 0, h / 2, 0, "#a6d1d8");
           (pane.material as THREE.MeshStandardMaterial).transparent = true;
           (pane.material as THREE.MeshStandardMaterial).opacity = 0.3;
         }
