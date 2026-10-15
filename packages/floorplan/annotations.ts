@@ -1,3 +1,4 @@
+import { openingPlacement } from "./geometry";
 import { bounds, type Project } from "./model";
 export function furnitureCallouts(p: Project) {
   const items = p.items.filter((i) => !i.kind);
@@ -46,12 +47,69 @@ export function furnitureCallouts(p: Project) {
 export function annotationBounds(
   p: Project,
   callouts: ReturnType<typeof furnitureCallouts>,
+  windows: ReturnType<typeof windowDimensionEntries> = [],
 ) {
   const b = bounds(p);
-  if (!callouts.length) return b;
-  const minX = Math.min(b.x, ...callouts.map((c) => c.x - 20)),
-    minY = Math.min(b.y, ...callouts.map((c) => c.y - 36)),
-    maxX = Math.max(b.x + b.width, ...callouts.map((c) => c.x + c.width + 20)),
-    maxY = Math.max(b.y + b.height, ...callouts.map((c) => c.y + 36));
+  if (!callouts.length && !windows.length) return b;
+  const windowPoints = windows.flatMap((w) => {
+    const m = w.placement,
+      offset = w.offset + 50;
+    return [m.start, m.end].map((p) => ({
+      x: p.x - m.uy * offset,
+      y: p.y + m.ux * offset,
+    }));
+  });
+  const minX = Math.min(
+      b.x,
+      ...callouts.map((c) => c.x - 20),
+      ...windowPoints.map((p) => p.x - 30),
+    ),
+    minY = Math.min(
+      b.y,
+      ...callouts.map((c) => c.y - 36),
+      ...windowPoints.map((p) => p.y - 30),
+    ),
+    maxX = Math.max(
+      b.x + b.width,
+      ...callouts.map((c) => c.x + c.width + 20),
+      ...windowPoints.map((p) => p.x + 30),
+    ),
+    maxY = Math.max(
+      b.y + b.height,
+      ...callouts.map((c) => c.y + 36),
+      ...windowPoints.map((p) => p.y + 30),
+    );
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+export function windowDimensionEntries(p: Project) {
+  const lanes = new Map<string, number>();
+  return p.items
+    .filter((i) => i.kind === "window")
+    .slice()
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .flatMap((item) => {
+      const placement = openingPlacement(p, item);
+      if (!placement) return [];
+      const lane = lanes.get(placement.wall.id) ?? 0;
+      lanes.set(placement.wall.id, lane + 1);
+      return [{ item, placement, offset: 58 + lane * 52 }];
+    });
+}
+export function rasterSize(width: number, height: number) {
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  )
+    throw new Error("画像の範囲が不正です。");
+  const scale = Math.min(
+    3000 / Math.max(width, height),
+    Math.sqrt(4000000 / (width * height)),
+  );
+  return {
+    width: Math.max(1, Math.floor(width * scale)),
+    height: Math.max(1, Math.floor(height * scale)),
+  };
 }

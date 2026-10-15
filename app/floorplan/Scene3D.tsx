@@ -38,7 +38,7 @@ export default function Scene3D({
     }
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#f2f1ec");
-    const box = bounds({ ...project, dimensions: [] }),
+    const box = bounds({ ...project, dimensions: [], notes: [] }),
       cx = (box.x + box.width / 2) / 100,
       cz = (box.y + box.height / 2) / 100;
     const span = Math.max(box.width, box.height) / 100;
@@ -155,7 +155,7 @@ export default function Scene3D({
         .filter(
           (i) =>
             i.kind &&
-            ["door", "sliding", "window"].includes(i.kind) &&
+            ["door", "sliding", "opening", "window"].includes(i.kind) &&
             projectOnWall(i, wall).distance < wall.thickness / 2 + 2 &&
             Math.abs(Math.sin((i.rotation * Math.PI) / 180 - angle)) < 0.02,
         )
@@ -249,6 +249,7 @@ export default function Scene3D({
         z: number,
         col = c,
       ) => boxMesh(group, ww, hh, dd, x, y, z, col);
+      if (item.kind === "opening") return;
       if (item.kind === "outlet") {
         add(w, 0.12, 0.03, 0, h, 0, "#fff8e9");
         return;

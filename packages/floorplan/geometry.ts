@@ -209,7 +209,9 @@ export function resizeRoomInterior(
     beforeRooms = rooms(p);
   const attached = candidate.items
     .filter(
-      (i) => i.kind && ["door", "window", "sliding", "outlet"].includes(i.kind),
+      (i) =>
+        i.kind &&
+        ["door", "window", "sliding", "opening", "outlet"].includes(i.kind),
     )
     .map((item) => {
       const hit = p.walls
@@ -278,7 +280,10 @@ export function resizeRoomInterior(
 
 /** Inner faces of the adjoining walls to each opening edge, in a stable plan direction. */
 export function openingPlacement(p: Pick<Project, "walls">, item: Item) {
-  if (!item.kind || !["window", "door", "sliding"].includes(item.kind))
+  if (
+    !item.kind ||
+    !["window", "door", "sliding", "opening"].includes(item.kind)
+  )
     return null;
   const nearest = p.walls
     .map((wall) => ({ wall, hit: projectOnWall(item, wall) }))

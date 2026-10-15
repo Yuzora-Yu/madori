@@ -31,6 +31,7 @@ export default function PlanItem({
       </title>
       {selected && (
         <rect
+          data-editor-only="item-selection"
           x={-w / 2 - 7}
           y={-d / 2 - 7}
           width={w + 14}
@@ -54,6 +55,22 @@ export default function PlanItem({
           />
           <circle cx={pose.hinge.x} cy="0" r="3" fill="#87785f" />
         </g>
+      ) : i.kind === "opening" ? (
+        <g>
+          <rect
+            x={-w / 2}
+            y={-d / 2 - 1}
+            width={w}
+            height={d + 2}
+            fill="#f7f7f2"
+            stroke="none"
+          />
+          <path
+            d={`M${-w / 2} ${-d / 2} v${d} M${w / 2} ${-d / 2} v${d}`}
+            stroke="#8d9587"
+            strokeWidth="1.5"
+          />
+        </g>
       ) : i.kind === "sliding" ? (
         <g>
           <rect x={-w / 2} y="-7" width={w} height="14" fill="#f7f5ee" />
@@ -61,12 +78,6 @@ export default function PlanItem({
             d={`M${-w / 2} -3 h${w / 2} M0 3 h${w / 2}`}
             stroke="#a58c6b"
             strokeWidth="4"
-          />
-          <path
-            d={`M${-w / 4} -18 h${w / 2} l-6 -4 m6 4 l-6 4`}
-            fill="none"
-            stroke="#a58c6b"
-            strokeWidth="1.5"
           />
         </g>
       ) : i.kind === "window" ? (

@@ -1,4 +1,7 @@
+import { diagramSvg, diagramPng, fileName } from "./exports";
+import PrintPreview from "./PrintPreview";
 import {
+  windowDimensionEntries,
   furnitureCallouts,
   annotationBounds,
 } from "../../packages/floorplan/annotations";
@@ -23,6 +26,9 @@ import {
   useState,
 } from "react";
 import {
+  removeDoorLeaf,
+  addPointNote,
+  translatePointNote,
   translateDimensionNote,
   addDimensionNote,
   addWall,
@@ -50,22 +56,24 @@ import Icon, { type IconName } from "./Icons";
 import PlanItem from "./PlanItem";
 import WindowDimensions from "./WindowDimensions";
 import DimensionMemo from "./DimensionMemo";
+import PointMemo from "./PointMemo";
 const Scene3D = lazy(() => import("./Scene3D"));
-type Tool = "select" | "wall" | "pan" | "measure" | FixtureKind;
+type Tool = "select" | "wall" | "pan" | "measure" | "note" | FixtureKind;
 type Selection =
-  | { type: "item" | "wall" | "dimension"; id: string }
+  | { type: "item" | "wall" | "dimension" | "note"; id: string }
   | { type: "room"; index: number }
   | null;
 type View = { x: number; y: number; width: number; height: number };
 type Gesture =
   | { type: "item"; before: Project; id: string; offset: Point }
+  | { type: "note"; before: Project; id: string; offset: Point }
   | { type: "dimension"; before: Project; id: string; offset: Point }
   | { type: "wall"; start: Point }
   | { type: "pan"; screen: Point; view: View; scale: number };
 const toolList: { id: Tool; icon: IconName; label: string; key?: string }[] = [
   { id: "select", icon: "cursor", label: "選択", key: "V" },
   { id: "wall", icon: "wall", label: "壁を描く", key: "W" },
-  { id: "measure", icon: "ruler", label: "寸法メモ", key: "M" },
+  { id: "note", icon: "note", label: "メモ", key: "N" },
   { id: "door", icon: "door", label: "ドア" },
   { id: "sliding", icon: "sliding", label: "引き戸" },
   { id: "window", icon: "window", label: "窓" },
@@ -133,16 +141,27 @@ export default function Planner() {
   const [showFurnitureNames, setShowFurnitureNames] = useState(
     viewPreferences.showFurnitureNames === true,
   );
+  const [showWindowDimensions, setShowWindowDimensions] = useState(
+    viewPreferences.showWindowDimensions !== false,
+  );
   useEffect(() => {
     try {
       localStorage.setItem(
         "madori.view.v1",
-        JSON.stringify({ seeThrough, showFurnitureNames }),
+        JSON.stringify({
+          seeThrough,
+          showFurnitureNames,
+          showWindowDimensions,
+        }),
       );
     } catch {
       /* Display settings are optional; project saving reports its own errors. */
     }
-  }, [seeThrough, showFurnitureNames]);
+  }, [seeThrough, showFurnitureNames, showWindowDimensions]);
+  const windowDimensions = useMemo(
+    () => (showWindowDimensions ? windowDimensionEntries(project) : []),
+    [project, showWindowDimensions],
+  );
   const callouts = useMemo(
     () => (showFurnitureNames ? furnitureCallouts(project) : []),
     [project, showFurnitureNames],
@@ -150,10 +169,13 @@ export default function Planner() {
   const toggleFurnitureNames = () => {
     const next = !showFurnitureNames;
     setShowFurnitureNames(next);
-    if (next) setView(annotationBounds(project, furnitureCallouts(project)));
+    if (next)
+      setView(
+        annotationBounds(project, furnitureCallouts(project), windowDimensions),
+      );
   };
   const [view, setView] = useState<View>(() =>
-    annotationBounds(initial.project, callouts),
+    annotationBounds(initial.project, callouts, windowDimensions),
   );
   const [canvasSize, setCanvasSize] = useState({ width: 700, height: 450 });
   const [draft, setDraft] = useState<{ a: Point; b: Point } | null>(null);
@@ -164,6 +186,13 @@ export default function Planner() {
     null,
   );
   const [help, setHelp] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [printPreview, setPrintPreview] = useState<{
+    svg: string;
+    name: string;
+    landscape: boolean;
+  } | null>(null);
+  const closePrintPreview = useCallback(() => setPrintPreview(null), []);
   const [compact, setCompact] = useState(
     () => window.matchMedia("(max-width: 1100px)").matches,
   );
@@ -261,6 +290,16 @@ export default function Planner() {
     selection?.type === "item"
       ? project.items.find((i) => i.id === selection.id)
       : undefined;
+  const selectedPointNote =
+    selection?.type === "note"
+      ? project.notes.find((n) => n.id === selection.id)
+      : undefined;
+  useEffect(() => {
+    if (selectedPointNote?.id && detailsOpen)
+      document
+        .querySelector<HTMLTextAreaElement>("textarea[data-note-text]")
+        ?.focus();
+  }, [selectedPointNote?.id, detailsOpen]);
   const selectedDimension =
     selection?.type === "dimension"
       ? project.dimensions.find((d) => d.id === selection.id)
@@ -316,6 +355,8 @@ export default function Planner() {
   const remove = useCallback(() => {
     if (!selection) return;
     change((p) => {
+      if (selection.type === "note")
+        p.notes = p.notes.filter((n) => n.id !== selection.id);
       if (selection.type === "dimension")
         p.dimensions = p.dimensions.filter((d) => d.id !== selection.id);
       if (selection.type === "item")
@@ -326,7 +367,7 @@ export default function Planner() {
     setSelection(null);
   }, [selection, change]);
   const fit = useCallback(() => {
-    const b = annotationBounds(project, callouts),
+    const b = annotationBounds(project, callouts, windowDimensions),
       rect = svg.current?.getBoundingClientRect();
     const aspect = rect ? rect.width / rect.height : 1.3;
     const width = Math.max(b.width, b.height * aspect),
@@ -337,7 +378,7 @@ export default function Planner() {
       width,
       height,
     });
-  }, [project, callouts]);
+  }, [project, callouts, windowDimensions]);
   useEffect(() => {
     if (blocked) return;
     const timer = setTimeout(() => {
@@ -455,7 +496,7 @@ export default function Planner() {
   }, [mode]);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (furnitureEditor || help) return;
+      if (furnitureEditor || help || printPreview) return;
       if (
         e.target instanceof HTMLElement &&
         (e.target.isContentEditable ||
@@ -475,7 +516,8 @@ export default function Planner() {
           return;
         }
         const g = gesture.current;
-        if (g?.type === "item" || g?.type === "dimension") setProject(g.before);
+        if (g?.type === "item" || g?.type === "dimension" || g?.type === "note")
+          setProject(g.before);
         gesture.current = null;
         setDraft(null);
         chooseTool("select");
@@ -505,6 +547,8 @@ export default function Planner() {
       }
       if (e.key.toLowerCase() === "v") chooseTool("select");
       if (e.key.toLowerCase() === "w") chooseTool("wall");
+      if (e.key.toLowerCase() === "n" && !e.ctrlKey && !e.metaKey && !e.altKey)
+        chooseTool("note");
       if (e.key.toLowerCase() === "m" && !e.ctrlKey && !e.metaKey && !e.altKey)
         chooseTool("measure");
       if (e.key.toLowerCase() === "r" && selectedItem)
@@ -523,6 +567,7 @@ export default function Planner() {
     change,
     furnitureEditor,
     help,
+    printPreview,
     focusMode,
     toggleFocus,
     chooseTool,
@@ -555,6 +600,18 @@ export default function Planner() {
         view,
         scale: m?.a || 1,
       };
+      return;
+    }
+    if (tool === "note") {
+      e.preventDefault();
+      let id = "";
+      change((p) => {
+        id = addPointNote(p, point).id;
+      });
+      setSelection({ type: "note", id });
+      chooseTool("select");
+      if (overlayPanels) setLibraryOpen(false);
+      setDetailsOpen(true);
       return;
     }
     if (tool === "measure") {
@@ -609,6 +666,17 @@ export default function Planner() {
         y: g.view.y - (e.clientY - g.screen.y) / g.scale,
       });
     }
+    if (g.type === "note") {
+      const pt = world(e),
+        dx = snap(pt.x - g.offset.x, snapping),
+        dy = snap(pt.y - g.offset.y, snapping);
+      setProject({
+        ...g.before,
+        notes: g.before.notes.map((n) =>
+          n.id === g.id ? translatePointNote(n, dx, dy) : n,
+        ),
+      });
+    }
     if (g.type === "dimension") {
       const pt = world(e),
         original = g.before.dimensions.find((d) => d.id === g.id)!;
@@ -647,7 +715,7 @@ export default function Planner() {
       if (distance(g.start, pt) >= 10) change((p) => addWall(p, g.start, pt));
     }
     if (
-      (g?.type === "item" || g?.type === "dimension") &&
+      (g?.type === "item" || g?.type === "dimension" || g?.type === "note") &&
       JSON.stringify(g.before) !== JSON.stringify(project)
     )
       remember(g.before);
@@ -742,26 +810,38 @@ export default function Planner() {
   }
   function exportSvg() {
     if (!svg.current) return;
-    const copy = svg.current.cloneNode(true) as SVGSVGElement;
-    const b = annotationBounds(project, callouts);
-    copy.setAttribute("viewBox", `${b.x} ${b.y} ${b.width} ${b.height}`);
-    copy.setAttribute("width", String(b.width));
-    copy.setAttribute("height", String(b.height));
-    copy.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-    const style = document.createElementNS(
-      "http://www.w3.org/2000/svg",
-      "style",
-    );
-    style.textContent =
-      ".room-name{font:500 15px sans-serif;fill:#596957;paint-order:stroke;stroke:#f7f7f2;stroke-width:3}.room-area{font:12px sans-serif;fill:#7c8478;paint-order:stroke;stroke:#f7f7f2;stroke-width:3}.dim-label{font:12px sans-serif;fill:#6e766a;paint-order:stroke;stroke:#f7f5ee;stroke-width:6}.dim-line{stroke:#a6ab9d;stroke-width:1}";
-    copy.querySelectorAll("[data-editor-only]").forEach((el) => el.remove());
-    copy.prepend(style);
+    const b = annotationBounds(project, callouts, windowDimensions);
     download(
-      new Blob([new XMLSerializer().serializeToString(copy)], {
+      new Blob([diagramSvg(svg.current, b, project.name)], {
         type: "image/svg+xml",
       }),
-      `${project.name}.svg`,
+      `${fileName(project.name)}.svg`,
     );
+  }
+  async function exportImage() {
+    if (!svg.current || exportBusy) return;
+    setExportBusy(true);
+    try {
+      const b = annotationBounds(project, callouts, windowDimensions);
+      const blob = await diagramPng(svg.current, b, project.name);
+      download(blob, `${fileName(project.name)}.png`);
+      setNotice("PNG画像を保存しました。");
+    } catch (e) {
+      setNotice(
+        e instanceof Error ? e.message : "画像を保存できませんでした。",
+      );
+    } finally {
+      setExportBusy(false);
+    }
+  }
+  function openPrint() {
+    if (!svg.current) return;
+    const b = annotationBounds(project, callouts, windowDimensions);
+    setPrintPreview({
+      svg: diagramSvg(svg.current, b, project.name),
+      name: project.name,
+      landscape: b.width > b.height,
+    });
   }
   function roomLabel(room: Room) {
     return project.labels.find((l) => inside(l, room.points));
@@ -836,6 +916,14 @@ export default function Planner() {
               <button onClick={() => setHelp(true)}>
                 <Icon name="help" size={16} />
                 使い方
+              </button>
+              <button
+                onClick={() => {
+                  setMode("2d");
+                  chooseTool("measure");
+                }}
+              >
+                2点の寸法メモを追加（M）
               </button>
               <button disabled={mode === "3d"} onClick={exportSvg}>
                 <Icon name="download" size={16} />
@@ -1155,6 +1243,16 @@ export default function Planner() {
             </div>
             <div className="display-tools" aria-label="2Dの表示切替">
               <button
+                aria-label="窓の寸法を常時表示"
+                title="窓の幅・高さ・壁からの距離を表示"
+                aria-pressed={showWindowDimensions}
+                className={showWindowDimensions ? "active" : ""}
+                onClick={() => setShowWindowDimensions(!showWindowDimensions)}
+              >
+                <Icon name="ruler" size={18} />
+                <span>窓寸法</span>
+              </button>
+              <button
                 aria-label="家具を半透明にする"
                 title="家具を半透明にする"
                 aria-pressed={seeThrough}
@@ -1173,6 +1271,26 @@ export default function Planner() {
               >
                 <Icon name="label" size={18} />
                 <span>家具名</span>
+              </button>
+            </div>
+            <div className="export-tools" aria-label="図面の保存と印刷">
+              <button
+                aria-label="PNG画像として保存"
+                title="2D図面をPNG画像として保存"
+                disabled={mode === "3d" || exportBusy}
+                onClick={() => void exportImage()}
+              >
+                <Icon name="image" size={18} />
+                <span>{exportBusy ? "作成中…" : "画像保存"}</span>
+              </button>
+              <button
+                aria-label="A4で印刷"
+                title="2D図面をA4で印刷"
+                disabled={mode === "3d"}
+                onClick={openPrint}
+              >
+                <Icon name="print" size={18} />
+                <span>A4印刷</span>
               </button>
             </div>
             <div className="history-tools">
@@ -1202,14 +1320,16 @@ export default function Planner() {
               >
                 <Icon name="settings" size={17} />
                 <span>
-                  {selectedDimension
-                    ? "寸法メモ"
-                    : selectedItem?.name ||
-                      (selectedWall
-                        ? "選択中の壁"
-                        : (selectedRoom
-                            ? roomLabel(selectedRoom)?.name
-                            : undefined) || "選択中の部屋")}
+                  {selectedPointNote
+                    ? "メモ"
+                    : selectedDimension
+                      ? "寸法メモ"
+                      : selectedItem?.name ||
+                        (selectedWall
+                          ? "選択中の壁"
+                          : (selectedRoom
+                              ? roomLabel(selectedRoom)?.name
+                              : undefined) || "選択中の部屋")}
                 </span>
                 <strong>寸法を編集</strong>
                 <Icon name="chevron" size={15} />
@@ -1225,7 +1345,11 @@ export default function Planner() {
                 onPointerUp={pointerUp}
                 onPointerCancel={() => {
                   const g = gesture.current;
-                  if (g?.type === "item" || g?.type === "dimension")
+                  if (
+                    g?.type === "item" ||
+                    g?.type === "dimension" ||
+                    g?.type === "note"
+                  )
                     setProject(g.before);
                   gesture.current = null;
                   setDraft(null);
@@ -1330,6 +1454,7 @@ export default function Planner() {
                       [w.a, w.b].map((pt, i) => (
                         <circle
                           key={i}
+                          data-editor-only="wall-endpoint"
                           cx={pt.x}
                           cy={pt.y}
                           r="6"
@@ -1338,6 +1463,35 @@ export default function Planner() {
                           strokeWidth="2"
                         />
                       ))}
+                  </g>
+                ))}
+                {project.items.map((i) => (
+                  <PlanItem
+                    key={i.id}
+                    item={i}
+                    selected={selectedItem?.id === i.id}
+                    seeThrough={seeThrough}
+                    onPointerDown={(e) => selectItem(e, i.id)}
+                  />
+                ))}
+                {roomList.map((r, index) => (
+                  <g key={`room-caption-${index}`} pointerEvents="none">
+                    <text
+                      x={r.center.x}
+                      y={r.center.y - 4}
+                      textAnchor="middle"
+                      className="room-name"
+                    >
+                      {roomLabel(r)?.name || `部屋 ${index + 1}`}
+                    </text>
+                    <text
+                      x={r.center.x}
+                      y={r.center.y + 16}
+                      textAnchor="middle"
+                      className="room-area"
+                    >
+                      {interiorRoom(project, r).area.toFixed(1)} m²
+                    </text>
                   </g>
                 ))}
                 {dimensions &&
@@ -1374,36 +1528,27 @@ export default function Planner() {
                       </g>
                     );
                   })}
-                {project.items.map((i) => (
-                  <PlanItem
-                    key={i.id}
-                    item={i}
-                    selected={selectedItem?.id === i.id}
-                    seeThrough={seeThrough}
-                    onPointerDown={(e) => selectItem(e, i.id)}
+                {showFurnitureNames && <FurnitureCallouts entries={callouts} />}
+                {project.notes.map((n) => (
+                  <PointMemo
+                    key={n.id}
+                    entry={n}
+                    selected={selectedPointNote?.id === n.id}
+                    onPointerDown={(e) => {
+                      if (tool !== "select" || e.altKey || e.button !== 0)
+                        return;
+                      e.stopPropagation();
+                      setSelection({ type: "note", id: n.id });
+                      gesture.current = {
+                        type: "note",
+                        before: project,
+                        id: n.id,
+                        offset: world(e),
+                      };
+                      svg.current?.setPointerCapture(e.pointerId);
+                    }}
                   />
                 ))}
-                {roomList.map((r, index) => (
-                  <g key={`room-caption-${index}`} pointerEvents="none">
-                    <text
-                      x={r.center.x}
-                      y={r.center.y - 4}
-                      textAnchor="middle"
-                      className="room-name"
-                    >
-                      {roomLabel(r)?.name || `部屋 ${index + 1}`}
-                    </text>
-                    <text
-                      x={r.center.x}
-                      y={r.center.y + 16}
-                      textAnchor="middle"
-                      className="room-area"
-                    >
-                      {interiorRoom(project, r).area.toFixed(1)} m²
-                    </text>
-                  </g>
-                ))}
-                {showFurnitureNames && <FurnitureCallouts entries={callouts} />}
                 {project.dimensions.map((d) => (
                   <DimensionMemo
                     key={d.id}
@@ -1425,19 +1570,32 @@ export default function Planner() {
                   />
                 ))}
                 {tool === "measure" && measureDraft && (
-                  <DimensionMemo
-                    entry={{
-                      id: "draft",
-                      ...measureDraft,
-                      note: "2点目をクリック・タップ",
-                    }}
-                    selected={false}
-                  />
+                  <g data-editor-only="measure-draft">
+                    <DimensionMemo
+                      entry={{
+                        id: "draft",
+                        ...measureDraft,
+                        note: "2点目をクリック・タップ",
+                      }}
+                      selected={false}
+                    />
+                  </g>
                 )}
-                {selectedWindow && windowPlacement && (
+                {windowDimensions.map((w) => (
+                  <WindowDimensions
+                    key={w.item.id}
+                    item={w.item}
+                    placement={w.placement}
+                    offset={w.offset}
+                    selected={selectedWindow?.id === w.item.id}
+                  />
+                ))}
+                {!showWindowDimensions && selectedWindow && windowPlacement && (
                   <WindowDimensions
                     item={selectedWindow}
                     placement={windowPlacement}
+                    selected
+                    editorOnly
                   />
                 )}
                 {draft && (
@@ -1488,15 +1646,17 @@ export default function Planner() {
                 <div className="canvas-instruction">
                   {tool === "wall"
                     ? "ドラッグで壁を描く · 壁を選択して寸法を指定"
-                    : tool === "measure"
-                      ? measureDraft
-                        ? "2点目をクリック・タップして寸法メモを追加"
-                        : "1点目をクリック・タップ · 次に2点目を指定"
-                      : tool === "select"
-                        ? "家具をドラッグで移動 · 右ドラッグで画面を移動"
-                        : tool === "pan"
-                          ? "ドラッグで画面を移動"
-                          : `${fixtureDefaults[tool].name}を置く位置をクリック`}
+                    : tool === "note"
+                      ? "メモを残す場所をクリック・タップ"
+                      : tool === "measure"
+                        ? measureDraft
+                          ? "2点目をクリック・タップして寸法メモを追加"
+                          : "1点目をクリック・タップ · 次に2点目を指定"
+                        : tool === "select"
+                          ? "家具をドラッグで移動 · 右ドラッグで画面を移動"
+                          : tool === "pan"
+                            ? "ドラッグで画面を移動"
+                            : `${fixtureDefaults[tool].name}を置く位置をクリック`}
                 </div>
                 <div className="zoom-controls">
                   <button
@@ -1597,7 +1757,34 @@ export default function Planner() {
               <Icon name="close" size={18} />
             </button>
           </div>
-          {selectedDimension ? (
+          {selectedPointNote ? (
+            <div className="property-content">
+              <h3 className="section-label">この場所のメモ</h3>
+              <label className="field">
+                メモ
+                <textarea
+                  data-note-text
+                  rows={5}
+                  maxLength={200}
+                  placeholder="例：窓下の高さ85 cm／ここに棚を置く"
+                  value={selectedPointNote.text}
+                  onChange={(e) =>
+                    change((p) => {
+                      p.notes.find((n) => n.id === selectedPointNote.id)!.text =
+                        e.target.value;
+                    })
+                  }
+                />
+              </label>
+              <p className="property-note">
+                ピンの位置に対するメモです。ドラッグで移動できます。壁や家具は変わりません。
+              </p>
+              <button className="wide-button danger" onClick={remove}>
+                <Icon name="trash" size={17} />
+                メモを削除
+              </button>
+            </div>
+          ) : selectedDimension ? (
             <div className="property-content">
               <h3 className="section-label">寸法メモ</h3>
               <p className="property-note">
@@ -1905,6 +2092,27 @@ export default function Planner() {
                   onChange={(e) => setItem("color", e.target.value)}
                 />
               </label>
+              {(selectedItem.kind === "sliding" ||
+                selectedItem.kind === "door") && (
+                <>
+                  <button
+                    className="wide-button"
+                    onClick={() =>
+                      change((p) => removeDoorLeaf(p, selectedItem.id))
+                    }
+                  >
+                    建具だけ外して開口を残す
+                  </button>
+                  <p className="property-note">
+                    扉を撤去し、隣の部屋につながる開口を残します。幅と高さはそのまま使えます。
+                  </p>
+                </>
+              )}
+              {selectedItem.kind === "opening" && (
+                <p className="property-note">
+                  建具がない開口です。2D・3Dともこの幅でつながります。削除すると壁に戻ります。
+                </p>
+              )}
               <div className="object-actions">
                 <button
                   onClick={() =>
@@ -1923,11 +2131,16 @@ export default function Planner() {
                 </button>
                 <button className="danger" onClick={remove}>
                   <Icon name="trash" size={17} />
-                  削除
+                  {selectedItem.kind === "opening"
+                    ? "開口を閉じる"
+                    : selectedItem.kind === "sliding" ||
+                        selectedItem.kind === "door"
+                      ? "壁に戻す"
+                      : "削除"}
                 </button>
               </div>
               {selectedItem.kind &&
-                ["door", "sliding", "window", "outlet"].includes(
+                ["door", "sliding", "opening", "window", "outlet"].includes(
                   selectedItem.kind,
                 ) && (
                   <p className="property-note">
@@ -2139,6 +2352,11 @@ export default function Planner() {
                   onChange={setSnapping}
                 />
                 <Toggle
+                  label="窓の寸法を常時表示"
+                  checked={showWindowDimensions}
+                  onChange={setShowWindowDimensions}
+                />
+                <Toggle
                   label="壁の寸法を表示"
                   checked={dimensions}
                   onChange={setDimensions}
@@ -2249,6 +2467,9 @@ export default function Planner() {
           }
         />
       )}
+      {printPreview && (
+        <PrintPreview {...printPreview} onClose={closePrintPreview} />
+      )}
       {help && (
         <div className="modal-backdrop" onClick={() => setHelp(false)}>
           <section
@@ -2266,7 +2487,7 @@ export default function Planner() {
               <Icon name="close" />
             </button>
             <span className="eyebrow">WELCOME TO MADORI</span>
-            <h2 id="help-title">暮らしを描く、4つのステップ。</h2>
+            <h2 id="help-title">暮らしを描く、基本の操作。</h2>
             <ol>
               <li>
                 <strong>壁を描く</strong>
@@ -2289,7 +2510,7 @@ export default function Planner() {
               <li>
                 <strong>寸法メモと家具の表示</strong>
                 <p>
-                  寸法メモ（M）で好きな2点を指定し、設定から実測値とメモを登録。ツールバーの「透過」で家具を半透明に、「家具名」で図面外への引き出し表示を切り替えます。
+                  メモ（N）で好きな1か所をクリックし、寸法や覚え書きを登録。「透過」で家具を半透明に、「家具名」で図面外への引き出し表示を切り替えます。窓寸法は常時表示できます。
                 </p>
               </li>
               <li>
@@ -2301,7 +2522,7 @@ export default function Planner() {
               <li>
                 <strong>3Dで確かめる</strong>
                 <p>
-                  3Dで回転・拡大して配置を確認。保存ボタンでJSONに書き出すと、別の端末でも読み込めます。
+                  3Dで回転・拡大して配置を確認。保存ボタンのJSONは別の端末で読み込めます。2Dの「PNG」「A4印刷」で図面を画像保存・印刷できます。
                 </p>
               </li>
             </ol>

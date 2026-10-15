@@ -19,7 +19,7 @@ export type Shape =
   | "plant"
   | "generic";
 export type FixtureKind =
-  "door" | "sliding" | "window" | "bath" | "toilet" | "outlet";
+  "door" | "sliding" | "opening" | "window" | "bath" | "toilet" | "outlet";
 export interface Furniture {
   baseElevation?: number;
   shelfLevels?: number;
@@ -64,8 +64,13 @@ export interface DimensionNote {
   note: string;
   value?: number;
 }
+export interface PointNote extends Point {
+  id: string;
+  text: string;
+}
 export interface Project {
-  formatVersion: 3;
+  formatVersion: 4;
+  notes: PointNote[];
   dimensions: DimensionNote[];
   dimensionBasis: "interior";
   name: string;
@@ -89,6 +94,13 @@ export const snap = (n: number, enabled: boolean) =>
 export function bounds(p: Project) {
   const points = [
     ...p.walls.flatMap((w) => [w.a, w.b]),
+    ...p.notes.flatMap((n) => [
+      n,
+      {
+        x: n.x + Math.max(120, Math.min(n.text.length, 29) * 13) + 30,
+        y: n.y - 40,
+      },
+    ]),
     ...p.dimensions.flatMap((d) => {
       const x = (d.a.x + d.b.x) / 2,
         y = (d.a.y + d.b.y) / 2,
@@ -194,7 +206,9 @@ export function resizeWall(p: Project, id: string, length: number) {
   if (!w || length < 10 || length > 20100) return;
   const attached = p.items
     .filter(
-      (i) => i.kind && ["door", "sliding", "window", "outlet"].includes(i.kind),
+      (i) =>
+        i.kind &&
+        ["door", "sliding", "opening", "window", "outlet"].includes(i.kind),
     )
     .flatMap((item) => {
       const near = p.walls
@@ -321,6 +335,13 @@ export const fixtureDefaults: Record<
   FixtureKind,
   { name: string; width: number; depth: number; height: number; color: string }
 > = {
+  opening: {
+    name: "開口（建具なし）",
+    width: 160,
+    depth: 12,
+    height: 210,
+    color: "#bda282",
+  },
   door: { name: "ドア", width: 80, depth: 12, height: 210, color: "#bda282" },
   sliding: {
     name: "引き戸",
@@ -374,7 +395,7 @@ export function moveItem(p: Project, item: Item, point: Point) {
   item.y = point.y;
   if (
     item.kind &&
-    ["door", "sliding", "window", "outlet"].includes(item.kind)
+    ["door", "sliding", "opening", "window", "outlet"].includes(item.kind)
   ) {
     const near = p.walls
       .map((w) => ({ w, hit: projectOnWall(point, w) }))
@@ -394,7 +415,8 @@ export function moveItem(p: Project, item: Item, point: Point) {
 }
 export function emptyProject(): Project {
   return {
-    formatVersion: 3,
+    formatVersion: 4,
+    notes: [],
     dimensions: [],
     dimensionBasis: "interior",
     name: "新しい間取り",
@@ -522,7 +544,7 @@ export function parseProject(text: string): Project {
   const p = JSON.parse(text);
   if (
     !p ||
-    ![1, 2, 3].includes(p.formatVersion) ||
+    ![1, 2, 3, 4].includes(p.formatVersion) ||
     (p.formatVersion >= 2 && p.dimensionBasis !== "interior")
   )
     throw new Error(
@@ -603,7 +625,7 @@ export function parseProject(text: string): Project {
   )
     throw new Error("寸法またはオブジェクトのデータが不正です。");
   if (
-    (p.formatVersion === 3 && !Array.isArray(p.dimensions)) ||
+    (p.formatVersion >= 3 && !Array.isArray(p.dimensions)) ||
     (p.dimensions !== undefined &&
       (!Array.isArray(p.dimensions) ||
         p.dimensions.length > 2000 ||
@@ -619,15 +641,26 @@ export function parseProject(text: string): Project {
         )))
   )
     throw new Error("寸法メモのデータが不正です。");
+  if (
+    (p.formatVersion === 4 && !Array.isArray(p.notes)) ||
+    (p.notes !== undefined &&
+      (!Array.isArray(p.notes) ||
+        p.notes.length > 2000 ||
+        !p.notes.every(
+          (n: PointNote) => n && str(n.id) && point(n) && str(n.text),
+        )))
+  )
+    throw new Error("メモのデータが不正です。");
   const ids = [
     ...p.walls,
     ...p.items,
     ...p.furniture,
     ...(p.dimensions ?? []),
+    ...(p.notes ?? []),
   ].map((v) => v.id);
   if (
     new Set(ids).size !== ids.length ||
-    ids.some((id) => /^[wifm]\d+$/.test(id) && Number(id.slice(1)) >= p.nextId)
+    ids.some((id) => /^[wifmn]\d+$/.test(id) && Number(id.slice(1)) >= p.nextId)
   )
     throw new Error("オブジェクトIDが重複または不正です。");
   // Version 1 geometry is retained; dimensions now measure the inner wall faces.
@@ -646,6 +679,10 @@ export function parseProject(text: string): Project {
   if (p.formatVersion === 2) {
     p.formatVersion = 3;
     p.dimensions ??= [];
+  }
+  if (p.formatVersion === 3) {
+    p.formatVersion = 4;
+    p.notes ??= [];
   }
   return p as Project;
 }
@@ -682,4 +719,34 @@ export function translateDimensionNote(
   )
     return entry;
   return { ...entry, a, b };
+}
+
+export function addPointNote(p: Project, point: Point) {
+  if (
+    ![point.x, point.y].every((v) => Number.isFinite(v) && Math.abs(v) <= 50000)
+  )
+    throw new Error("メモの位置が不正です。");
+  const note: PointNote = { ...point, id: `n${p.nextId++}`, text: "" };
+  p.notes.push(note);
+  return note;
+}
+export function translatePointNote(note: PointNote, dx: number, dy: number) {
+  const x = note.x + dx,
+    y = note.y + dy;
+  return [x, y].every((v) => Number.isFinite(v) && Math.abs(v) <= 50000)
+    ? { ...note, x, y }
+    : note;
+}
+
+export function removeDoorLeaf(p: Project, id: string) {
+  const item = p.items.find((i) => i.id === id);
+  if (!item || !["door", "sliding"].includes(item.kind ?? ""))
+    throw new Error("ドアまたは引き戸を選んでください。");
+  item.kind = "opening";
+  item.name = ["ドア", "引き戸"].includes(item.name)
+    ? "開口（建具なし）"
+    : `${item.name}（建具なし）`;
+  delete item.doorHinge;
+  delete item.doorSwing;
+  delete item.doorAngle;
 }

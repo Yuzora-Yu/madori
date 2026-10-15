@@ -1,6 +1,8 @@
 import {
   furnitureCallouts,
   annotationBounds,
+  windowDimensionEntries,
+  rasterSize,
 } from "../packages/floorplan/annotations";
 import {
   openingPlacement,
@@ -16,6 +18,9 @@ import {
 import { describe, expect, it } from "vitest";
 import {
   translateDimensionNote,
+  addPointNote,
+  translatePointNote,
+  removeDoorLeaf,
   addDimensionNote,
   addWall,
   demoProject,
@@ -255,7 +260,7 @@ describe("interior measurements, doors and built-in shelves", () => {
       delete i.doorAngle;
     });
     const migrated = parseProject(JSON.stringify(old));
-    expect(migrated.formatVersion).toBe(3);
+    expect(migrated.formatVersion).toBe(4);
     expect(migrated.dimensionBasis).toBe("interior");
     expect(migrated.walls).toEqual(old.walls);
     expect(migrated.items.map((i) => [i.x, i.y, i.rotation])).toEqual(
@@ -417,7 +422,7 @@ describe("free dimension notes and furniture name leaders", () => {
     const p = demoProject(),
       legacy = { ...p, formatVersion: 2, dimensions: undefined };
     const migrated = parseProject(JSON.stringify(legacy));
-    expect(migrated.formatVersion).toBe(3);
+    expect(migrated.formatVersion).toBe(4);
     expect(migrated.dimensions).toEqual([]);
     expect(migrated.walls).toEqual(p.walls);
     expect(migrated.items).toEqual(p.items);
@@ -469,4 +474,104 @@ it("moves dimension notes without changing measured values and prevents invalid 
   expect(d.a).toEqual({ x: 30, y: 40 });
   expect(translateDimensionNote(d, 50000, 0)).toBe(d);
   expect(translateDimensionNote(d, NaN, 0)).toBe(d);
+});
+
+describe("point notes, persistent dimensions and exports", () => {
+  it("stores a note at one point without requiring a second point", () => {
+    const p = rectangle(),
+      before = structuredClone(p.walls),
+      n = addPointNote(p, { x: 123.5, y: 75 });
+    n.text = "ここに棚を置く・高さ85 cm";
+    expect(n.x).toBe(123.5);
+    expect(n.y).toBe(75);
+    expect(p.walls).toEqual(before);
+    expect(parseProject(JSON.stringify(p))).toEqual(p);
+    const moved = translatePointNote(n, 10, 20);
+    expect(moved.x).toBe(133.5);
+    expect(moved.text).toBe(n.text);
+    expect(translatePointNote(n, 50000, 0)).toBe(n);
+  });
+  it("upgrades version 3 while preserving previous dimension notes", () => {
+    const p = rectangle();
+    addDimensionNote(p, { x: 0, y: 0 }, { x: 100, y: 0 }).note = "以前の寸法";
+    const legacy = { ...p, formatVersion: 3, notes: undefined };
+    const restored = parseProject(JSON.stringify(legacy));
+    expect(restored.formatVersion).toBe(4);
+    expect(restored.notes).toEqual([]);
+    expect(restored.dimensions).toEqual(p.dimensions);
+    expect(restored.walls).toEqual(p.walls);
+  });
+  it("rejects malformed point notes without treating them as geometry", () => {
+    const p = rectangle();
+    addPointNote(p, { x: 20, y: 40 });
+    for (const patch of [
+      { x: null },
+      { text: 42 },
+      { text: "x".repeat(201) },
+      { id: p.walls[0].id },
+    ]) {
+      const q = structuredClone(p);
+      Object.assign(q.notes[0], patch);
+      expect(() => parseProject(JSON.stringify(q))).toThrow();
+    }
+    expect(() =>
+      parseProject(JSON.stringify({ ...p, notes: undefined })),
+    ).toThrow();
+    expect(() =>
+      parseProject(JSON.stringify({ ...p, dimensions: undefined })),
+    ).toThrow();
+    expect(() => addPointNote(p, { x: Infinity, y: 0 })).toThrow();
+  });
+  it("retains window dimension lanes and includes their outer labels in exports", () => {
+    const p = rectangle();
+    placeFixture(p, "window", { x: 80, y: 300 });
+    placeFixture(p, "window", { x: 300, y: 300 });
+    const entries = windowDimensionEntries(p);
+    expect(entries).toHaveLength(2);
+    expect(entries[0].offset).not.toBe(entries[1].offset);
+    expect(windowDimensionEntries(p)).toEqual(entries);
+    const b = annotationBounds(p, [], entries);
+    for (const e of entries) {
+      const y = e.placement.start.y + e.placement.ux * (e.offset + 50);
+      expect(y).toBeLessThanOrEqual(b.y + b.height);
+    }
+  });
+  it("bounds raster export memory and preserves the plan aspect ratio", () => {
+    for (const [w, h] of [
+      [1000, 700],
+      [1, 100000],
+      [100000, 1],
+      [10000, 10000],
+      [350, 900],
+    ]) {
+      const s = rasterSize(w, h);
+      expect(Math.max(s.width, s.height)).toBeLessThanOrEqual(3000);
+      expect(s.width * s.height).toBeLessThanOrEqual(4000000);
+      expect(s.width).toBeGreaterThan(0);
+      expect(s.height).toBeGreaterThan(0);
+    }
+    expect(() => rasterSize(0, 100)).toThrow();
+    expect(() => rasterSize(NaN, 100)).toThrow();
+    const s = rasterSize(900, 600);
+    expect(s.width / s.height).toBeCloseTo(1.5, 2);
+  });
+  it("removes a door leaf without closing or moving its opening", () => {
+    const p = rectangle(),
+      door = placeFixture(p, "sliding", { x: 200, y: 0 }),
+      original = structuredClone(door),
+      walls = structuredClone(p.walls);
+    removeDoorLeaf(p, door.id);
+    expect(door.kind).toBe("opening");
+    expect(door.width).toBe(original.width);
+    expect(door.height).toBe(original.height);
+    expect(door.x).toBe(original.x);
+    expect(door.rotation).toBe(original.rotation);
+    expect(p.walls).toEqual(walls);
+    expect(parseProject(JSON.stringify(p))).toEqual(p);
+    moveItem(p, door, { x: 250, y: 5 });
+    expect(door.y).toBe(0);
+    resizeWall(p, p.walls[0].id, 500);
+    expect(door.x).toBeCloseTo(312.5);
+    expect(door.kind).toBe("opening");
+  });
 });
