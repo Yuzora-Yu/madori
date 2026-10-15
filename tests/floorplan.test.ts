@@ -1,3 +1,4 @@
+import { furniturePosition } from "../packages/floorplan/movement";
 import {
   furnitureCallouts,
   annotationBounds,
@@ -573,5 +574,33 @@ describe("point notes, persistent dimensions and exports", () => {
     resizeWall(p, p.walls[0].id, 500);
     expect(door.x).toBeCloseTo(312.5);
     expect(door.kind).toBe("opening");
+  });
+});
+
+describe("precise furniture movement", () => {
+  it("preserves measured offsets and the locked coordinate during snapped dragging", () => {
+    expect(
+      furniturePosition({ x: 12.5, y: 36.7 }, { x: 4.3, y: 19.2 }, 1, "x"),
+    ).toEqual({ x: 16.5, y: 36.7 });
+    expect(
+      furniturePosition({ x: 12.5, y: 36.7 }, { x: 4.3, y: -19.2 }, 10, "y"),
+    ).toEqual({ x: 12.5, y: 16.7 });
+  });
+  it("supports millimetre adjustments and unsnapped movement without cumulative decimal noise", () => {
+    let point = { x: 0, y: 0 };
+    for (let i = 0; i < 100; i++)
+      point = furniturePosition(point, { x: 0.1, y: 0 }, 0, "free");
+    expect(point).toEqual({ x: 10, y: 0 });
+    expect(
+      furniturePosition(point, { x: 0.24, y: -0.36 }, 0.1, "free"),
+    ).toEqual({ x: 10.2, y: -0.4 });
+    expect(
+      furniturePosition(point, { x: 0.234, y: -0.356 }, 0, "free"),
+    ).toEqual({ x: 10.234, y: -0.356 });
+  });
+  it("rejects invalid displacement and movement beyond the saved coordinate range", () => {
+    const point = { x: 49999, y: 0 };
+    expect(furniturePosition(point, { x: 10, y: 0 }, 0, "free")).toBe(point);
+    expect(furniturePosition(point, { x: NaN, y: 0 }, 1, "free")).toBe(point);
   });
 });

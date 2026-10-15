@@ -1,3 +1,7 @@
+import {
+  furniturePosition,
+  type MoveAxis,
+} from "../../packages/floorplan/movement";
 import { diagramSvg, diagramPng, fileName } from "./exports";
 import PrintPreview from "./PrintPreview";
 import {
@@ -65,7 +69,13 @@ type Selection =
   | null;
 type View = { x: number; y: number; width: number; height: number };
 type Gesture =
-  | { type: "item"; before: Project; id: string; offset: Point }
+  | {
+      type: "item";
+      before: Project;
+      id: string;
+      offset: Point;
+      shiftAxis?: "x" | "y";
+    }
   | { type: "note"; before: Project; id: string; offset: Point }
   | { type: "dimension"; before: Project; id: string; offset: Point }
   | { type: "wall"; start: Point }
@@ -122,6 +132,8 @@ export default function Planner() {
     setMeasureDraft(null);
   }, []);
   const [selection, setSelection] = useState<Selection>(null);
+  const [moveAxis, setMoveAxis] = useState<MoveAxis>("free");
+  const [moveStep, setMoveStep] = useState(1);
   const [mode, setMode] = useState<"2d" | "3d">("2d");
   const [grid, setGrid] = useState(true),
     [snapping, setSnapping] = useState(true),
@@ -503,6 +515,40 @@ export default function Planner() {
           ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName))
       )
         return;
+      if (
+        mode === "2d" &&
+        selectedItem &&
+        !selectedItem.kind &&
+        !gesture.current &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        e.key.startsWith("Arrow")
+      ) {
+        const direction = {
+          ArrowLeft: [-1, 0],
+          ArrowRight: [1, 0],
+          ArrowUp: [0, -1],
+          ArrowDown: [0, 1],
+        }[e.key];
+        if (direction) {
+          e.preventDefault();
+          const amount = moveStep * (e.shiftKey ? 10 : 1);
+          change((p) => {
+            const item = p.items.find((i) => i.id === selectedItem.id)!;
+            Object.assign(
+              item,
+              furniturePosition(
+                item,
+                { x: direction[0] * amount, y: direction[1] * amount },
+                0,
+                "free",
+              ),
+            );
+          });
+          return;
+        }
+      }
       if (e.key === "Escape") {
         if (overlayPanels && (libraryOpen || detailsOpen)) {
           e.preventDefault();
@@ -564,6 +610,8 @@ export default function Planner() {
     redo,
     remove,
     selectedItem,
+    mode,
+    moveStep,
     change,
     furnitureEditor,
     help,
@@ -575,6 +623,13 @@ export default function Planner() {
     libraryOpen,
     detailsOpen,
   ]);
+  function nudgeFurniture(dx: number, dy: number) {
+    if (!selectedItem || selectedItem.kind || gesture.current) return;
+    change((p) => {
+      const item = p.items.find((i) => i.id === selectedItem.id)!;
+      Object.assign(item, furniturePosition(item, { x: dx, y: dy }, 0, "free"));
+    });
+  }
   function world(e: { clientX: number; clientY: number }): Point {
     const matrix = svg.current?.getScreenCTM();
     if (!matrix) return { x: 0, y: 0 };
@@ -696,10 +751,24 @@ export default function Planner() {
           items: g.before.items.map((i) => (i.id === g.id ? { ...i } : i)),
         },
         item = p.items.find((i) => i.id === g.id)!;
+      const delta = {
+        x: pt.x - g.offset.x - item.x,
+        y: pt.y - g.offset.y - item.y,
+      };
+      if (e.shiftKey && !g.shiftAxis && Math.hypot(delta.x, delta.y) > 3)
+        g.shiftAxis = Math.abs(delta.x) >= Math.abs(delta.y) ? "x" : "y";
+      if (!e.shiftKey) g.shiftAxis = undefined;
       moveItem(
         p,
         item,
-        snapped({ x: pt.x - g.offset.x, y: pt.y - g.offset.y }),
+        item.kind
+          ? snapped({ x: pt.x - g.offset.x, y: pt.y - g.offset.y })
+          : furniturePosition(
+              item,
+              delta,
+              snapping ? moveStep : 0,
+              moveAxis === "free" ? (g.shiftAxis ?? "free") : moveAxis,
+            ),
       );
       setProject(p);
     }
@@ -1312,6 +1381,70 @@ export default function Planner() {
               </button>
             </div>
           </div>
+          {mode === "2d" && (
+            <div
+              className="furniture-move-bar"
+              role="group"
+              aria-label="家具の移動と微調整"
+            >
+              <span className="move-item-name" title={selectedItem?.name}>
+                {selectedItem && !selectedItem.kind
+                  ? selectedItem.name
+                  : "家具を選択して移動"}
+              </span>
+              <label>
+                ドラッグ
+                <select
+                  aria-label="家具を動かす方向"
+                  value={moveAxis}
+                  onChange={(e) => setMoveAxis(e.target.value as MoveAxis)}
+                >
+                  <option value="free">自由</option>
+                  <option value="x">横だけ ↔</option>
+                  <option value="y">縦だけ ↕</option>
+                </select>
+              </label>
+              <label>
+                移動幅
+                <select
+                  aria-label="家具の移動幅"
+                  value={moveStep}
+                  onChange={(e) => setMoveStep(Number(e.target.value))}
+                >
+                  <option value={0.1}>1 mm</option>
+                  <option value={1}>1 cm</option>
+                  <option value={10}>10 cm</option>
+                </select>
+              </label>
+              <div
+                className="nudge-buttons"
+                role="group"
+                aria-label="家具を少しずつ移動"
+              >
+                {(
+                  [
+                    ["左", "←", -1, 0],
+                    ["上", "↑", 0, -1],
+                    ["下", "↓", 0, 1],
+                    ["右", "→", 1, 0],
+                  ] as const
+                ).map(([name, arrow, dx, dy]) => (
+                  <button
+                    key={name}
+                    disabled={!selectedItem || !!selectedItem.kind}
+                    aria-label={`家具を${name}へ移動`}
+                    title={`${name}へ${moveStep} cm`}
+                    onClick={() => nudgeFurniture(dx * moveStep, dy * moveStep)}
+                  >
+                    {arrow}
+                  </button>
+                ))}
+              </div>
+              <small>
+                矢印キーで微調整 · Shift＋矢印で10倍 · Shift＋ドラッグで方向固定
+              </small>
+            </div>
+          )}
           <div className={`canvas-wrap tool-${tool}`}>
             {selection && !detailsOpen && (
               <button
@@ -1653,7 +1786,7 @@ export default function Planner() {
                           ? "2点目をクリック・タップして寸法メモを追加"
                           : "1点目をクリック・タップ · 次に2点目を指定"
                         : tool === "select"
-                          ? "家具をドラッグで移動 · 右ドラッグで画面を移動"
+                          ? "家具をドラッグで移動 · Shiftで縦横固定 · 右ドラッグで画面を移動"
                           : tool === "pan"
                             ? "ドラッグで画面を移動"
                             : `${fixtureDefaults[tool].name}を置く位置をクリック`}
@@ -2347,7 +2480,7 @@ export default function Planner() {
                   onChange={setGrid}
                 />
                 <Toggle
-                  label="10 cmにスナップ"
+                  label="移動を目盛りに合わせる"
                   checked={snapping}
                   onChange={setSnapping}
                 />
@@ -2504,7 +2637,9 @@ export default function Planner() {
               <li>
                 <strong>家具と設備を置く</strong>
                 <p>
-                  家具の幅・奥行・高さを登録し「配置する」。ドラッグで移動、Rで回転。ドアや窓は壁の近くに配置します。
+                  家具の幅・奥行・高さを登録し「配置する」。ドラッグで移動、Rで回転。移動バーで縦横の方向固定と1
+                  mm・1 cm・10
+                  cmの微調整ができます。矢印キーでも移動、Shift＋矢印で10倍。ドアや窓は壁の近くに配置します。
                 </p>
               </li>
               <li>
