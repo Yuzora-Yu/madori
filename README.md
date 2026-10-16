@@ -35,7 +35,7 @@ npm run dev
 
 ## GitHub Pagesで使う
 
-公開先: **https://yuzora-yu.github.io/madori/**
+公開先: **https://yu-zora.com/tools/madori/**
 
 このリポジトリではGitHub Pagesを有効化済みです。`main` へPushするたびにチェックとビルドを行い、成功したものを自動公開します。公開リポジトリならGitHub FreeのPagesで利用できます。公開サイトにはアプリだけが含まれ、各端末の間取りや家具データはアップロードしません。別リポジトリへ複製する場合は **Settings → Pages → Build and deployment → Source** を **GitHub Actions** に設定してください。
 
@@ -52,3 +52,11 @@ npm run preview
 ```
 
 操作説明と現在の範囲: [ユーザーガイド](docs/USER_GUIDE.md)。設計判断: [DECISIONS](docs/DECISIONS.md)。
+
+## 独自ドメインでの配信
+
+正式な起動URLは https://yu-zora.com/tools/madori/ です。紹介ページは https://yu-zora.com/tools/Tool06_madori/ 。既存のエンタメモリーと同様に、GitHub Pagesを静的資材の配信元としてCloudflare Worker経由で返し、ブラウザのURLは独自ドメインを維持します。通常のアプリ更新は今まで通りmainへのPushとPagesの自動公開で反映されます。
+
+ドメイン接続用Workerの設定はwrangler.jsonc、コードはworker/domain.tsです。認証済みの開発端末で `npm run deploy:domain` により公開します。接続先はyu-zora.comのmadori用パス2件に限り、他のToolsや紹介ページには適用しません。Cookie・認証情報・クエリを配信元へ渡しません。
+
+旧GitHub Pages版と独自ドメイン版は保存領域が異なります。旧画面でJSONを「保存」し、新URLで「読込」すると引き継げます。旧URLは既存データを取り出せるよう自動転送しません。

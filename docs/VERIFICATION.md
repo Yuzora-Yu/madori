@@ -58,3 +58,10 @@
 - 横固定で斜めにドラッグしてもY=330.1を維持、縦固定で斜めにドラッグしてもX=450を維持することを実操作で確認。名称入力欄で矢印を押しても家具が動かないことを確認。
 - 320×568 pxでページ幅320、選択欄と矢印ボタンが画面内に収まること、作図領域の高さ約256 pxを確認。検証用スクリーンショットはoutputにのみ保存。
 - 最終チェック: `npm run typecheck`、`npm test`（40件）、`npm run lint`、`npm run build`、`npm run format:check` が成功。
+
+## 2026-10-16 独自ドメイン
+
+- 実アカウントのEntaMemoryの既存Workerとルート構成を確認し、同じGitHub Pages中継方式をmadoriへ追加。ルートはyu-zora.com/tools/madoriと配下のみ。
+- 完全一致の末尾スラッシュ補正、隣接パスの拒否、POST拒否、Cookie・Authorization・クエリを上流へ転送しないこと、サービスワーカーscope、転送先の独自ドメイン維持、404と外部転送拒否を回帰テスト。
+- typecheck、43件のテスト、Lint、build、format:check、Wrangler deploy --dry-runが成功。Cloudflareへ公開し、独自ドメインで2D・3Dを確認。
+- ポータルのconfig/tools.jsonでアプリの起動先・配信説明を修正。分離した作業ツリーでnpm test（検証・ビルド・公開ビルド確認を含む）が成功。他作業の未コミット変更は含めない。

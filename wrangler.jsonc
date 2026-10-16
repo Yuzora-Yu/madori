@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "madori-domain",
+  "main": "worker/domain.ts",
+  "compatibility_date": "2026-10-16",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    { "pattern": "yu-zora.com/tools/madori", "zone_name": "yu-zora.com" },
+    { "pattern": "yu-zora.com/tools/madori/*", "zone_name": "yu-zora.com" },
+  ],
+  "observability": {
+    "enabled": true,
+    "traces": { "enabled": true },
+  },
+}
