@@ -1,3 +1,4 @@
+import WallDimension from "../app/floorplan/WallDimension";
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -33,6 +34,47 @@ function entrance() {
   return p;
 }
 describe("annotation editing and free cabinet doors", () => {
+  it("hides one inner dimension without changing its wall, measured length or saved label position", () => {
+    const p = entrance(),
+      w = p.walls[0];
+    w.dimensionOffset = 1800;
+    const before = structuredClone(w),
+      visibleBounds = bounds(p);
+    const render = () =>
+      renderToStaticMarkup(
+        createElement(WallDimension, {
+          entry: wallDimensionLayout(p, w, rooms(p)),
+          selected: false,
+          hidden: w.dimensionHidden,
+          onPointerDown: () => {},
+        }),
+      );
+    expect(render()).toContain("128 cm 内寸");
+    w.dimensionHidden = true;
+    expect(render()).toBe("");
+    expect(bounds(p).height).toBeLessThan(visibleBounds.height);
+    const restored = parseProject(JSON.stringify(p));
+    expect(restored.walls[0]).toEqual({ ...before, dimensionHidden: true });
+    expect(restored.walls.slice(1)).toEqual(p.walls.slice(1));
+    w.dimensionHidden = false;
+    expect(render()).toContain("128 cm 内寸");
+    expect({ ...w, dimensionHidden: undefined }).toEqual({
+      ...before,
+      dimensionHidden: undefined,
+    });
+    expect(
+      parseProject(JSON.stringify(entrance())).walls[0].dimensionHidden,
+    ).toBeUndefined();
+    expect(() =>
+      parseProject(
+        JSON.stringify({
+          ...p,
+          walls: [{ ...w, dimensionHidden: "false" }, ...p.walls.slice(1)],
+        }),
+      ),
+    ).toThrow();
+  });
+
   it("moves note text without changing its measured anchor and includes it in saved output bounds", () => {
     const p = entrance(),
       n = addPointNote(p, { x: 45.5, y: 71.2 });

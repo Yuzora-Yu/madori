@@ -3,6 +3,7 @@ export interface Point {
   y: number;
 }
 export interface Wall {
+  dimensionHidden?: boolean;
   dimensionOffset?: number;
   id: string;
   a: Point;
@@ -104,6 +105,7 @@ export const snap = (n: number, enabled: boolean) =>
 export function bounds(p: Project) {
   const points = [
     ...p.walls.flatMap((w) => {
+      if (w.dimensionHidden) return [w.a, w.b];
       const len = distance(w.a, w.b) || 1,
         offset = w.dimensionOffset ?? 26;
       const middle = {
@@ -641,7 +643,9 @@ export function parseProject(text: string): Project {
         finite(w.thickness, 1, 100) &&
         finite(w.height, 1, 2000) &&
         (w.dimensionOffset === undefined ||
-          finite(w.dimensionOffset, -2000, 2000)),
+          finite(w.dimensionOffset, -2000, 2000)) &&
+        (w.dimensionHidden === undefined ||
+          typeof w.dimensionHidden === "boolean"),
     ) ||
     !p.furniture.every(
       (f: Furniture) =>

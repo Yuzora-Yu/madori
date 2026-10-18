@@ -2,12 +2,15 @@ import type { wallDimensionLayout } from "../../packages/floorplan/annotations";
 export default function WallDimension({
   entry,
   selected,
+  hidden = false,
   onPointerDown,
 }: {
   entry: ReturnType<typeof wallDimensionLayout>;
   selected: boolean;
+  hidden?: boolean;
   onPointerDown: React.PointerEventHandler<SVGGElement>;
 }) {
+  if (hidden) return null;
   const { a, b, label, value } = entry;
   return (
     <g>

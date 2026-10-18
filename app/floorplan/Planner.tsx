@@ -1689,6 +1689,7 @@ export default function Planner() {
                     return (
                       <WallDimension
                         key={`dim-${w.id}`}
+                        hidden={w.dimensionHidden}
                         entry={entry}
                         selected={selectedWall?.id === w.id}
                         onPointerDown={(e) => {
@@ -2382,6 +2383,22 @@ export default function Planner() {
                   <strong>壁の寸法</strong>
                 </span>
               </div>
+              <Toggle
+                label="この壁の内寸を表示"
+                checked={!selectedWall.dimensionHidden}
+                onChange={(visible) =>
+                  change((p) => {
+                    p.walls.find(
+                      (w) => w.id === selectedWall.id,
+                    )!.dimensionHidden = !visible;
+                  })
+                }
+              />
+              <p className="property-note">
+                オフにすると、この壁の寸法線と数値だけを隠します。再表示するときは壁本体を選んでオンに戻してください。
+                {!dimensions &&
+                  "全体の「壁の寸法を表示」もオフになっています。"}
+              </p>
               <NumberField
                 key={`${selectedWall.id}-length`}
                 label="長さ（内寸）"
