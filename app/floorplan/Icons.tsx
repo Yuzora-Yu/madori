@@ -11,6 +11,7 @@ export type IconName =
   | "opening"
   | "cursor"
   | "wall"
+  | "cabinetDoor"
   | "door"
   | "sliding"
   | "window"
@@ -43,6 +44,7 @@ export type IconName =
   | "copy"
   | "help";
 const paths: Record<IconName, string> = {
+  cabinetDoor: "M3 4h18v16H3z M12 4v16 M9 10v4 M15 10v4",
   settings: "M4 6h16 M4 12h16 M4 18h16 M8 3v6 M16 9v6 M10 15v6",
   expand: "M9 3H3v6 M15 3h6v6 M3 15v6h6 M21 15v6h-6",
   collapse: "M3 9h6V3 M21 9h-6V3 M3 15h6v6 M21 15h-6v6",

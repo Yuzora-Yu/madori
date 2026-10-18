@@ -3,6 +3,7 @@ export interface Point {
   y: number;
 }
 export interface Wall {
+  dimensionOffset?: number;
   id: string;
   a: Point;
   b: Point;
@@ -19,7 +20,14 @@ export type Shape =
   | "plant"
   | "generic";
 export type FixtureKind =
-  "door" | "sliding" | "opening" | "window" | "bath" | "toilet" | "outlet";
+  | "door"
+  | "cabinetDoor"
+  | "sliding"
+  | "opening"
+  | "window"
+  | "bath"
+  | "toilet"
+  | "outlet";
 export interface Furniture {
   baseElevation?: number;
   shelfLevels?: number;
@@ -33,6 +41,7 @@ export interface Furniture {
   shape: Shape;
 }
 export interface Item {
+  wallSnap?: boolean;
   baseElevation?: number;
   shelfLevels?: number;
   doorHinge?: "left" | "right";
@@ -65,11 +74,12 @@ export interface DimensionNote {
   value?: number;
 }
 export interface PointNote extends Point {
+  labelOffset?: Point;
   id: string;
   text: string;
 }
 export interface Project {
-  formatVersion: 4;
+  formatVersion: 5;
   notes: PointNote[];
   dimensions: DimensionNote[];
   dimensionBasis: "interior";
@@ -93,12 +103,33 @@ export const snap = (n: number, enabled: boolean) =>
   enabled ? Math.round(n / 10) * 10 : Math.round(n);
 export function bounds(p: Project) {
   const points = [
-    ...p.walls.flatMap((w) => [w.a, w.b]),
+    ...p.walls.flatMap((w) => {
+      const len = distance(w.a, w.b) || 1,
+        offset = w.dimensionOffset ?? 26;
+      const middle = {
+        x: (w.a.x + w.b.x) / 2 + ((w.b.y - w.a.y) / len) * offset,
+        y: (w.a.y + w.b.y) / 2 - ((w.b.x - w.a.x) / len) * offset,
+      };
+      return [
+        w.a,
+        w.b,
+        { x: middle.x - 60, y: middle.y - 20 },
+        { x: middle.x + 60, y: middle.y + 20 },
+      ];
+    }),
     ...p.notes.flatMap((n) => [
       n,
       {
-        x: n.x + Math.max(120, Math.min(n.text.length, 29) * 13) + 30,
-        y: n.y - 40,
+        x: n.x + (n.labelOffset?.x ?? 16) - 10,
+        y: n.y + (n.labelOffset?.y ?? -34) - 10,
+      },
+      {
+        x:
+          n.x +
+          (n.labelOffset?.x ?? 16) +
+          Math.max(120, Math.min(n.text.length, 29) * 13) +
+          20,
+        y: n.y + (n.labelOffset?.y ?? -34) + 40,
       },
     ]),
     ...p.dimensions.flatMap((d) => {
@@ -208,6 +239,7 @@ export function resizeWall(p: Project, id: string, length: number) {
     .filter(
       (i) =>
         i.kind &&
+        i.wallSnap !== false &&
         ["door", "sliding", "opening", "window", "outlet"].includes(i.kind),
     )
     .flatMap((item) => {
@@ -335,6 +367,13 @@ export const fixtureDefaults: Record<
   FixtureKind,
   { name: string; width: number; depth: number; height: number; color: string }
 > = {
+  cabinetDoor: {
+    name: "戸棚の扉",
+    width: 45,
+    depth: 2,
+    height: 70,
+    color: "#c3a880",
+  },
   opening: {
     name: "開口（建具なし）",
     width: 160,
@@ -380,7 +419,11 @@ export function placeFixture(
     shape: "generic",
     rotation: 0,
   };
-  if (kind === "door")
+  if (kind === "cabinetDoor") {
+    item.wallSnap = false;
+    item.baseElevation = 85;
+  }
+  if (kind === "door" || kind === "cabinetDoor")
     Object.assign(item, {
       doorHinge: "left",
       doorSwing: "positive",
@@ -395,6 +438,7 @@ export function moveItem(p: Project, item: Item, point: Point) {
   item.y = point.y;
   if (
     item.kind &&
+    item.wallSnap !== false &&
     ["door", "sliding", "opening", "window", "outlet"].includes(item.kind)
   ) {
     const near = p.walls
@@ -415,7 +459,7 @@ export function moveItem(p: Project, item: Item, point: Point) {
 }
 export function emptyProject(): Project {
   return {
-    formatVersion: 4,
+    formatVersion: 5,
     notes: [],
     dimensions: [],
     dimensionBasis: "interior",
@@ -544,7 +588,7 @@ export function parseProject(text: string): Project {
   const p = JSON.parse(text);
   if (
     !p ||
-    ![1, 2, 3, 4].includes(p.formatVersion) ||
+    ![1, 2, 3, 4, 5].includes(p.formatVersion) ||
     (p.formatVersion >= 2 && p.dimensionBasis !== "interior")
   )
     throw new Error(
@@ -595,7 +639,9 @@ export function parseProject(text: string): Project {
         point(w.b) &&
         distance(w.a, w.b) > 0.1 &&
         finite(w.thickness, 1, 100) &&
-        finite(w.height, 1, 2000),
+        finite(w.height, 1, 2000) &&
+        (w.dimensionOffset === undefined ||
+          finite(w.dimensionOffset, -2000, 2000)),
     ) ||
     !p.furniture.every(
       (f: Furniture) =>
@@ -609,6 +655,7 @@ export function parseProject(text: string): Project {
         dimensions(i) &&
         appearance(i) &&
         finite(i.rotation) &&
+        (i.wallSnap === undefined || typeof i.wallSnap === "boolean") &&
         (i.doorHinge === undefined ||
           ["left", "right"].includes(i.doorHinge)) &&
         (i.doorSwing === undefined ||
@@ -642,12 +689,20 @@ export function parseProject(text: string): Project {
   )
     throw new Error("寸法メモのデータが不正です。");
   if (
-    (p.formatVersion === 4 && !Array.isArray(p.notes)) ||
+    (p.formatVersion >= 4 && !Array.isArray(p.notes)) ||
     (p.notes !== undefined &&
       (!Array.isArray(p.notes) ||
         p.notes.length > 2000 ||
         !p.notes.every(
-          (n: PointNote) => n && str(n.id) && point(n) && str(n.text),
+          (n: PointNote) =>
+            n &&
+            str(n.id) &&
+            point(n) &&
+            str(n.text) &&
+            (n.labelOffset === undefined ||
+              (point(n.labelOffset) &&
+                finite(n.labelOffset.x, -2000, 2000) &&
+                finite(n.labelOffset.y, -2000, 2000))),
         )))
   )
     throw new Error("メモのデータが不正です。");
@@ -683,6 +738,10 @@ export function parseProject(text: string): Project {
   if (p.formatVersion === 3) {
     p.formatVersion = 4;
     p.notes ??= [];
+  }
+  if (p.formatVersion === 4) {
+    p.formatVersion = 5;
+    // Optional label offsets and wall attachment keep the previous appearance by default.
   }
   return p as Project;
 }
@@ -735,6 +794,18 @@ export function translatePointNote(note: PointNote, dx: number, dy: number) {
     y = note.y + dy;
   return [x, y].every((v) => Number.isFinite(v) && Math.abs(v) <= 50000)
     ? { ...note, x, y }
+    : note;
+}
+
+export function translatePointLabel(note: PointNote, dx: number, dy: number) {
+  const labelOffset = {
+    x: (note.labelOffset?.x ?? 16) + dx,
+    y: (note.labelOffset?.y ?? -34) + dy,
+  };
+  return [labelOffset.x, labelOffset.y].every(
+    (v) => Number.isFinite(v) && Math.abs(v) <= 2000,
+  )
+    ? { ...note, labelOffset }
     : note;
 }
 

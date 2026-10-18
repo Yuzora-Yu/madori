@@ -43,13 +43,15 @@ export default function PlanItem({
           strokeDasharray="5 4"
         />
       )}
-      {i.kind === "door" ? (
+      {i.kind === "door" || i.kind === "cabinetDoor" ? (
         <g fill="none" stroke="#87785f" strokeWidth="2">
-          <path
-            d={`M${-w / 2} 0 H${w / 2}`}
-            stroke="#f7f5ee"
-            strokeWidth="16"
-          />
+          {i.kind === "door" && i.wallSnap !== false && (
+            <path
+              d={`M${-w / 2} 0 H${w / 2}`}
+              stroke="#f7f5ee"
+              strokeWidth="16"
+            />
+          )}
           <path
             d={`M${pose.hinge.x} 0 L${pose.tip.x} ${pose.tip.y} ${(i.doorAngle ?? 90) > 0 ? `M${pose.closed.x} 0 A${w} ${w} 0 0 ${pose.sweep} ${pose.tip.x} ${pose.tip.y}` : ""}`}
           />
@@ -73,7 +75,13 @@ export default function PlanItem({
         </g>
       ) : i.kind === "sliding" ? (
         <g>
-          <rect x={-w / 2} y="-7" width={w} height="14" fill="#f7f5ee" />
+          <rect
+            x={-w / 2}
+            y="-7"
+            width={w}
+            height="14"
+            fill={i.wallSnap === false ? "none" : "#f7f5ee"}
+          />
           <path
             d={`M${-w / 2} -3 h${w / 2} M0 3 h${w / 2}`}
             stroke="#a58c6b"

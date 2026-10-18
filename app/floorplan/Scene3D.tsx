@@ -155,6 +155,7 @@ export default function Scene3D({
         .filter(
           (i) =>
             i.kind &&
+            i.wallSnap !== false &&
             ["door", "sliding", "opening", "window"].includes(i.kind) &&
             projectOnWall(i, wall).distance < wall.thickness / 2 + 2 &&
             Math.abs(Math.sin((i.rotation * Math.PI) / 180 - angle)) < 0.02,
@@ -265,17 +266,21 @@ export default function Scene3D({
         }
         return;
       }
-      if (item.kind === "door" || item.kind === "sliding") {
+      if (
+        item.kind === "door" ||
+        item.kind === "cabinetDoor" ||
+        item.kind === "sliding"
+      ) {
         const door = add(
           w,
-          cutaway ? 0.7 : h,
+          cutaway ? Math.min(0.7, h) : h,
           0.04,
           0,
-          (cutaway ? 0.7 : h) / 2,
+          (cutaway ? Math.min(0.7, h) : h) / 2,
           0,
           c,
         );
-        if (item.kind === "door") {
+        if (item.kind === "door" || item.kind === "cabinetDoor") {
           const pose = doorPose(item);
           door.position.x = pose.center.x / 100;
           door.position.z = pose.center.y / 100;

@@ -2012,3 +2012,12 @@ svg {
     display: none;
   }
 }
+
+.tool-select .memo-label,
+.tool-select .memo-anchor,
+.tool-select .wall-dimension-label {
+  cursor: move;
+}
+.tool-cabinetDoor .plan-canvas {
+  cursor: crosshair;
+}

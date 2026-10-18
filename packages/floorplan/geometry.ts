@@ -211,6 +211,7 @@ export function resizeRoomInterior(
     .filter(
       (i) =>
         i.kind &&
+        i.wallSnap !== false &&
         ["door", "window", "sliding", "opening", "outlet"].includes(i.kind),
     )
     .map((item) => {
@@ -282,6 +283,7 @@ export function resizeRoomInterior(
 export function openingPlacement(p: Pick<Project, "walls">, item: Item) {
   if (
     !item.kind ||
+    item.wallSnap === false ||
     !["window", "door", "sliding", "opening"].includes(item.kind)
   )
     return null;

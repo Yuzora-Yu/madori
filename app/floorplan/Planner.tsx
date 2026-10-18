@@ -1,3 +1,4 @@
+import WallDimension from "./WallDimension";
 import {
   furniturePosition,
   type MoveAxis,
@@ -5,6 +6,7 @@ import {
 import { diagramSvg, diagramPng, fileName } from "./exports";
 import PrintPreview from "./PrintPreview";
 import {
+  wallDimensionLayout,
   windowDimensionEntries,
   furnitureCallouts,
   annotationBounds,
@@ -33,6 +35,7 @@ import {
   removeDoorLeaf,
   addPointNote,
   translatePointNote,
+  translatePointLabel,
   translateDimensionNote,
   addDimensionNote,
   addWall,
@@ -76,7 +79,21 @@ type Gesture =
       offset: Point;
       shiftAxis?: "x" | "y";
     }
-  | { type: "note"; before: Project; id: string; offset: Point }
+  | {
+      type: "note";
+      before: Project;
+      id: string;
+      offset: Point;
+      part: "label" | "anchor";
+    }
+  | {
+      type: "wallLabel";
+      before: Project;
+      id: string;
+      offset: Point;
+      normal: Point;
+      startOffset: number;
+    }
   | { type: "dimension"; before: Project; id: string; offset: Point }
   | { type: "wall"; start: Point }
   | { type: "pan"; screen: Point; view: View; scale: number };
@@ -85,6 +102,7 @@ const toolList: { id: Tool; icon: IconName; label: string; key?: string }[] = [
   { id: "wall", icon: "wall", label: "壁を描く", key: "W" },
   { id: "note", icon: "note", label: "メモ", key: "N" },
   { id: "door", icon: "door", label: "ドア" },
+  { id: "cabinetDoor", icon: "cabinetDoor", label: "戸棚の扉" },
   { id: "sliding", icon: "sliding", label: "引き戸" },
   { id: "window", icon: "window", label: "窓" },
   { id: "bath", icon: "bath", label: "浴槽" },
@@ -518,7 +536,7 @@ export default function Planner() {
       if (
         mode === "2d" &&
         selectedItem &&
-        !selectedItem.kind &&
+        (!selectedItem.kind || selectedItem.wallSnap === false) &&
         !gesture.current &&
         !e.ctrlKey &&
         !e.metaKey &&
@@ -562,7 +580,12 @@ export default function Planner() {
           return;
         }
         const g = gesture.current;
-        if (g?.type === "item" || g?.type === "dimension" || g?.type === "note")
+        if (
+          g?.type === "item" ||
+          g?.type === "dimension" ||
+          g?.type === "note" ||
+          g?.type === "wallLabel"
+        )
           setProject(g.before);
         gesture.current = null;
         setDraft(null);
@@ -624,7 +647,12 @@ export default function Planner() {
     detailsOpen,
   ]);
   function nudgeFurniture(dx: number, dy: number) {
-    if (!selectedItem || selectedItem.kind || gesture.current) return;
+    if (
+      !selectedItem ||
+      (selectedItem.kind && selectedItem.wallSnap !== false) ||
+      gesture.current
+    )
+      return;
     change((p) => {
       const item = p.items.find((i) => i.id === selectedItem.id)!;
       Object.assign(item, furniturePosition(item, { x: dx, y: dy }, 0, "free"));
@@ -723,12 +751,32 @@ export default function Planner() {
     }
     if (g.type === "note") {
       const pt = world(e),
-        dx = snap(pt.x - g.offset.x, snapping),
-        dy = snap(pt.y - g.offset.y, snapping);
+        dx = Math.round(pt.x - g.offset.x),
+        dy = Math.round(pt.y - g.offset.y);
       setProject({
         ...g.before,
         notes: g.before.notes.map((n) =>
-          n.id === g.id ? translatePointNote(n, dx, dy) : n,
+          n.id === g.id
+            ? g.part === "label"
+              ? translatePointLabel(n, dx, dy)
+              : translatePointNote(n, dx, dy)
+            : n,
+        ),
+      });
+    }
+    if (g.type === "wallLabel") {
+      const pt = world(e),
+        value = Math.round(
+          g.startOffset +
+            (pt.x - g.offset.x) * g.normal.x +
+            (pt.y - g.offset.y) * g.normal.y,
+        );
+      setProject({
+        ...g.before,
+        walls: g.before.walls.map((w) =>
+          w.id === g.id
+            ? { ...w, dimensionOffset: Math.max(-2000, Math.min(2000, value)) }
+            : w,
         ),
       });
     }
@@ -761,7 +809,7 @@ export default function Planner() {
       moveItem(
         p,
         item,
-        item.kind
+        item.kind && item.wallSnap !== false
           ? snapped({ x: pt.x - g.offset.x, y: pt.y - g.offset.y })
           : furniturePosition(
               item,
@@ -784,7 +832,10 @@ export default function Planner() {
       if (distance(g.start, pt) >= 10) change((p) => addWall(p, g.start, pt));
     }
     if (
-      (g?.type === "item" || g?.type === "dimension" || g?.type === "note") &&
+      (g?.type === "item" ||
+        g?.type === "dimension" ||
+        g?.type === "note" ||
+        g?.type === "wallLabel") &&
       JSON.stringify(g.before) !== JSON.stringify(project)
     )
       remember(g.before);
@@ -1388,7 +1439,8 @@ export default function Planner() {
               aria-label="家具の移動と微調整"
             >
               <span className="move-item-name" title={selectedItem?.name}>
-                {selectedItem && !selectedItem.kind
+                {selectedItem &&
+                (!selectedItem.kind || selectedItem.wallSnap === false)
                   ? selectedItem.name
                   : "家具を選択して移動"}
               </span>
@@ -1431,7 +1483,10 @@ export default function Planner() {
                 ).map(([name, arrow, dx, dy]) => (
                   <button
                     key={name}
-                    disabled={!selectedItem || !!selectedItem.kind}
+                    disabled={
+                      !selectedItem ||
+                      (!!selectedItem.kind && selectedItem.wallSnap !== false)
+                    }
                     aria-label={`家具を${name}へ移動`}
                     title={`${name}へ${moveStep} cm`}
                     onClick={() => nudgeFurniture(dx * moveStep, dy * moveStep)}
@@ -1481,7 +1536,8 @@ export default function Planner() {
                   if (
                     g?.type === "item" ||
                     g?.type === "dimension" ||
-                    g?.type === "note"
+                    g?.type === "note" ||
+                    g?.type === "wallLabel"
                   )
                     setProject(g.before);
                   gesture.current = null;
@@ -1629,36 +1685,28 @@ export default function Planner() {
                 ))}
                 {dimensions &&
                   project.walls.map((w) => {
-                    const length = distance(w.a, w.b),
-                      dx = w.b.x - w.a.x,
-                      dy = w.b.y - w.a.y;
-                    const nx = (dy / length) * 26,
-                      ny = (-dx / length) * 26;
-                    const inset = wallInsets(project, w),
-                      a = {
-                        x: w.a.x + (dx / length) * inset.start,
-                        y: w.a.y + (dy / length) * inset.start,
-                      },
-                      b = {
-                        x: w.b.x - (dx / length) * inset.end,
-                        y: w.b.y - (dy / length) * inset.end,
-                      };
+                    const entry = wallDimensionLayout(project, w, roomList);
                     return (
-                      <g key={`dim-${w.id}`} pointerEvents="none">
-                        <path
-                          className="dim-line"
-                          d={`M${a.x + nx} ${a.y + ny} L${b.x + nx} ${b.y + ny} M${a.x + nx - 3} ${a.y + ny - 3} l6 6 M${b.x + nx - 3} ${b.y + ny - 3} l6 6`}
-                        />
-                        <text
-                          className="dim-label"
-                          textAnchor="middle"
-                          x={(w.a.x + w.b.x) / 2 + nx}
-                          y={(w.a.y + w.b.y) / 2 + ny - 5}
-                        >
-                          {Math.round(wallInteriorLength(project, w) * 10) / 10}{" "}
-                          cm 内寸
-                        </text>
-                      </g>
+                      <WallDimension
+                        key={`dim-${w.id}`}
+                        entry={entry}
+                        selected={selectedWall?.id === w.id}
+                        onPointerDown={(e) => {
+                          if (tool !== "select" || e.altKey || e.button !== 0)
+                            return;
+                          e.stopPropagation();
+                          setSelection({ type: "wall", id: w.id });
+                          gesture.current = {
+                            type: "wallLabel",
+                            before: project,
+                            id: w.id,
+                            offset: world(e),
+                            normal: entry.normal,
+                            startOffset: entry.offset,
+                          };
+                          svg.current?.setPointerCapture(e.pointerId);
+                        }}
+                      />
                     );
                   })}
                 {showFurnitureNames && <FurnitureCallouts entries={callouts} />}
@@ -1667,13 +1715,14 @@ export default function Planner() {
                     key={n.id}
                     entry={n}
                     selected={selectedPointNote?.id === n.id}
-                    onPointerDown={(e) => {
+                    onPointerDown={(e, part) => {
                       if (tool !== "select" || e.altKey || e.button !== 0)
                         return;
                       e.stopPropagation();
                       setSelection({ type: "note", id: n.id });
                       gesture.current = {
                         type: "note",
+                        part,
                         before: project,
                         id: n.id,
                         offset: world(e),
@@ -1910,8 +1959,19 @@ export default function Planner() {
                 />
               </label>
               <p className="property-note">
-                ピンの位置に対するメモです。ドラッグで移動できます。壁や家具は変わりません。
+                文字をドラッグすると、点を固定したままメモ部分だけを動かせます。点をドラッグすると全体が移動します。
               </p>
+              <button
+                className="wide-button"
+                onClick={() =>
+                  change((p) => {
+                    delete p.notes.find((n) => n.id === selectedPointNote.id)!
+                      .labelOffset;
+                  })
+                }
+              >
+                文字の位置を元に戻す
+              </button>
               <button className="wide-button danger" onClick={remove}>
                 <Icon name="trash" size={17} />
                 メモを削除
@@ -2124,7 +2184,8 @@ export default function Planner() {
                   )}
                 </section>
               )}
-              {selectedItem.kind === "door" && (
+              {(selectedItem.kind === "door" ||
+                selectedItem.kind === "cabinetDoor") && (
                 <>
                   <h3 className="section-label">ドアの開き方</h3>
                   <label className="field">
@@ -2178,6 +2239,35 @@ export default function Planner() {
                   />
                 </>
               )}
+              {selectedItem.kind === "cabinetDoor" && (
+                <NumberField
+                  label="扉の下端の高さ"
+                  value={selectedItem.baseElevation ?? 85}
+                  unit="cm"
+                  min={0}
+                  max={2000}
+                  onChange={(v) => setItem("baseElevation", v)}
+                />
+              )}
+              {selectedItem.kind &&
+                ["door", "sliding", "outlet"].includes(selectedItem.kind) && (
+                  <>
+                    <Toggle
+                      label="壁へ自動で吸着"
+                      checked={selectedItem.wallSnap !== false}
+                      onChange={(value) =>
+                        change((p) => {
+                          p.items.find(
+                            (i) => i.id === selectedItem.id,
+                          )!.wallSnap = value;
+                        })
+                      }
+                    />
+                    <p className="property-note">
+                      オフにすると、壁の近くでも位置・向きを自由に調整できます。壁の開口と寸法変更への追従も解除します。
+                    </p>
+                  </>
+                )}
               <h3 className="section-label">位置・向き</h3>
               <div className="dimension-fields two">
                 <NumberField
@@ -2225,22 +2315,23 @@ export default function Planner() {
                   onChange={(e) => setItem("color", e.target.value)}
                 />
               </label>
-              {(selectedItem.kind === "sliding" ||
-                selectedItem.kind === "door") && (
-                <>
-                  <button
-                    className="wide-button"
-                    onClick={() =>
-                      change((p) => removeDoorLeaf(p, selectedItem.id))
-                    }
-                  >
-                    建具だけ外して開口を残す
-                  </button>
-                  <p className="property-note">
-                    扉を撤去し、隣の部屋につながる開口を残します。幅と高さはそのまま使えます。
-                  </p>
-                </>
-              )}
+              {selectedItem.wallSnap !== false &&
+                (selectedItem.kind === "sliding" ||
+                  selectedItem.kind === "door") && (
+                  <>
+                    <button
+                      className="wide-button"
+                      onClick={() =>
+                        change((p) => removeDoorLeaf(p, selectedItem.id))
+                      }
+                    >
+                      建具だけ外して開口を残す
+                    </button>
+                    <p className="property-note">
+                      扉を撤去し、隣の部屋につながる開口を残します。幅と高さはそのまま使えます。
+                    </p>
+                  </>
+                )}
               {selectedItem.kind === "opening" && (
                 <p className="property-note">
                   建具がない開口です。2D・3Dともこの幅でつながります。削除すると壁に戻ります。
@@ -2266,8 +2357,9 @@ export default function Planner() {
                   <Icon name="trash" size={17} />
                   {selectedItem.kind === "opening"
                     ? "開口を閉じる"
-                    : selectedItem.kind === "sliding" ||
-                        selectedItem.kind === "door"
+                    : (selectedItem.kind === "sliding" ||
+                          selectedItem.kind === "door") &&
+                        selectedItem.wallSnap !== false
                       ? "壁に戻す"
                       : "削除"}
                 </button>
@@ -2277,7 +2369,7 @@ export default function Planner() {
                   selectedItem.kind,
                 ) && (
                   <p className="property-note">
-                    壁の近くへドラッグすると、壁の向きに沿って配置します。
+                    「壁へ自動で吸着」がオンのとき、壁の向きに沿って配置します。戸棚には「戸棚の扉」を使えます。
                   </p>
                 )}
             </div>
@@ -2338,6 +2430,37 @@ export default function Planner() {
                   })
                 }
               />
+              <NumberField
+                key={`${selectedWall.id}-dimensionOffset`}
+                label="寸法線の表示位置"
+                value={
+                  wallDimensionLayout(project, selectedWall, roomList).offset
+                }
+                unit="cm"
+                min={-2000}
+                max={2000}
+                onChange={(v) =>
+                  change((p) => {
+                    p.walls.find(
+                      (w) => w.id === selectedWall.id,
+                    )!.dimensionOffset = v;
+                  })
+                }
+              />
+              <p className="property-note">
+                寸法の文字をドラッグして、壁の近くや反対側へ寄せられます。壁の位置や内寸は変わりません。
+              </p>
+              <button
+                className="wide-button"
+                onClick={() =>
+                  change((p) => {
+                    delete p.walls.find((w) => w.id === selectedWall.id)!
+                      .dimensionOffset;
+                  })
+                }
+              >
+                寸法線の位置を自動に戻す
+              </button>
               <NumberField
                 key={`${selectedWall.id}-height`}
                 label="壁の高さ"

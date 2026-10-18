@@ -1,5 +1,12 @@
-import { openingPlacement } from "./geometry";
-import { bounds, type Project } from "./model";
+import { wallInsets, wallInteriorLength, openingPlacement } from "./geometry";
+import {
+  bounds,
+  distance,
+  same,
+  type Room,
+  type Wall,
+  type Project,
+} from "./model";
 export function furnitureCallouts(p: Project) {
   const items = p.items.filter((i) => !i.kind);
   if (!items.length) return [];
@@ -111,5 +118,53 @@ export function rasterSize(width: number, height: number) {
   return {
     width: Math.max(1, Math.floor(width * scale)),
     height: Math.max(1, Math.floor(height * scale)),
+  };
+}
+
+export function wallDimensionLayout(
+  p: Project,
+  wall: Wall,
+  roomList: Room[] = [],
+) {
+  const length = distance(wall.a, wall.b),
+    ux = (wall.b.x - wall.a.x) / length,
+    uy = (wall.b.y - wall.a.y) / length;
+  const normal = { x: uy, y: -ux },
+    inset = wallInsets(p, wall);
+  const mid = { x: (wall.a.x + wall.b.x) / 2, y: (wall.a.y + wall.b.y) / 2 };
+  const small = roomList
+    .filter(
+      (r) =>
+        r.area <= 6 &&
+        r.points.some((a, i) => {
+          const b = r.points[(i + 1) % r.points.length];
+          return (
+            (same(a, wall.a) && same(b, wall.b)) ||
+            (same(a, wall.b) && same(b, wall.a))
+          );
+        }),
+    )
+    .sort((a, b) => a.area - b.area)[0];
+  const sign =
+    small &&
+    (small.center.x - mid.x) * normal.x + (small.center.y - mid.y) * normal.y <
+      0
+      ? -1
+      : 1;
+  const offset =
+    wall.dimensionOffset ?? sign * Math.max(26, wall.thickness / 2 + 14);
+  return {
+    normal,
+    offset,
+    a: {
+      x: wall.a.x + ux * inset.start + normal.x * offset,
+      y: wall.a.y + uy * inset.start + normal.y * offset,
+    },
+    b: {
+      x: wall.b.x - ux * inset.end + normal.x * offset,
+      y: wall.b.y - uy * inset.end + normal.y * offset,
+    },
+    label: { x: mid.x + normal.x * offset, y: mid.y + normal.y * offset - 5 },
+    value: Math.round(wallInteriorLength(p, wall) * 10) / 10,
   };
 }

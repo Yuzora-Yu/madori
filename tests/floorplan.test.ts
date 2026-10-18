@@ -261,7 +261,7 @@ describe("interior measurements, doors and built-in shelves", () => {
       delete i.doorAngle;
     });
     const migrated = parseProject(JSON.stringify(old));
-    expect(migrated.formatVersion).toBe(4);
+    expect(migrated.formatVersion).toBe(5);
     expect(migrated.dimensionBasis).toBe("interior");
     expect(migrated.walls).toEqual(old.walls);
     expect(migrated.items.map((i) => [i.x, i.y, i.rotation])).toEqual(
@@ -423,7 +423,7 @@ describe("free dimension notes and furniture name leaders", () => {
     const p = demoProject(),
       legacy = { ...p, formatVersion: 2, dimensions: undefined };
     const migrated = parseProject(JSON.stringify(legacy));
-    expect(migrated.formatVersion).toBe(4);
+    expect(migrated.formatVersion).toBe(5);
     expect(migrated.dimensions).toEqual([]);
     expect(migrated.walls).toEqual(p.walls);
     expect(migrated.items).toEqual(p.items);
@@ -497,7 +497,7 @@ describe("point notes, persistent dimensions and exports", () => {
     addDimensionNote(p, { x: 0, y: 0 }, { x: 100, y: 0 }).note = "以前の寸法";
     const legacy = { ...p, formatVersion: 3, notes: undefined };
     const restored = parseProject(JSON.stringify(legacy));
-    expect(restored.formatVersion).toBe(4);
+    expect(restored.formatVersion).toBe(5);
     expect(restored.notes).toEqual([]);
     expect(restored.dimensions).toEqual(p.dimensions);
     expect(restored.walls).toEqual(p.walls);
