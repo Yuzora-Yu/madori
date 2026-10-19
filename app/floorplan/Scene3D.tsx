@@ -252,7 +252,7 @@ export default function Scene3D({
       ) => boxMesh(group, ww, hh, dd, x, y, z, col);
       if (item.kind === "opening") return;
       if (item.kind === "outlet") {
-        add(w, 0.12, 0.03, 0, h, 0, "#fff8e9");
+        add(w, d, 0.03, 0, h, 0, "#fff8e9");
         return;
       }
       if (item.kind === "window") {

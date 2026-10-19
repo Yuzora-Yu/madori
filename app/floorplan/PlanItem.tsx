@@ -24,10 +24,9 @@ export default function PlanItem({
       aria-label={i.name}
     >
       <title>
-        {i.name} · {w} × {d} × {i.height} cm
-        {i.kind === "window"
-          ? ` · 下端は床から${i.baseElevation ?? 90} cm`
-          : ""}
+        {i.kind === "outlet"
+          ? `${i.name} · プレート ${w} × ${d} cm · 床から ${i.height} cm`
+          : `${i.name} · ${w} × ${d} × ${i.height} cm${i.kind === "window" ? ` · 下端は床から${i.baseElevation ?? 90} cm` : ""}`}
       </title>
       {selected && (
         <rect
@@ -107,8 +106,18 @@ export default function PlanItem({
         </g>
       ) : i.kind === "outlet" ? (
         <g>
-          <circle r="13" fill="#fff7de" stroke="#a08953" strokeWidth="1.5" />
-          <path d="M-4 -4v7 M4 -4v7" stroke="#a08953" strokeWidth="2" />
+          <rect
+            data-editor-only="outlet-hit-area"
+            x={-Math.max(26, w) / 2}
+            y={-Math.max(26, d) / 2}
+            width={Math.max(26, w)}
+            height={Math.max(26, d)}
+            fill="transparent"
+          />
+          <g className="outlet-symbol" transform={`scale(${w / 26} ${d / 26})`}>
+            <circle r="13" fill="#fff7de" stroke="#a08953" strokeWidth="1.5" />
+            <path d="M-4 -4v7 M4 -4v7" stroke="#a08953" strokeWidth="2" />
+          </g>
         </g>
       ) : (
         <g fill={i.color} stroke="#6c776b" strokeWidth="1.3">

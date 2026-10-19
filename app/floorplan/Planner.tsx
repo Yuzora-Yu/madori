@@ -2075,12 +2075,20 @@ export default function Planner() {
               <h3 className="section-label">
                 {selectedWindow ? "窓のサイズ" : "サイズ"}
               </h3>
-              <div className="dimension-fields">
-                {[
-                  ["width", "幅"],
-                  ["depth", "奥行"],
-                  ["height", "高さ"],
-                ].map(([key, label]) => (
+              <div
+                className={`dimension-fields${selectedItem.kind === "outlet" ? " two" : ""}`}
+              >
+                {(selectedItem.kind === "outlet"
+                  ? [
+                      ["width", "幅"],
+                      ["depth", "プレート高さ"],
+                    ]
+                  : [
+                      ["width", "幅"],
+                      ["depth", "奥行"],
+                      ["height", "高さ"],
+                    ]
+                ).map(([key, label]) => (
                   <NumberField
                     key={`${selectedItem.id}-${key}`}
                     label={
@@ -2100,6 +2108,23 @@ export default function Planner() {
                   />
                 ))}
               </div>
+              {selectedItem.kind === "outlet" && (
+                <>
+                  <p className="property-note">
+                    幅とプレート高さで2Dの記号・3Dのプレートを小さくできます。例：幅6
+                    cm、高さ4 cm。
+                  </p>
+                  <NumberField
+                    key={`${selectedItem.id}-outlet-elevation`}
+                    label="床からの設置高さ"
+                    value={selectedItem.height}
+                    unit="cm"
+                    min={1}
+                    max={20000}
+                    onChange={(v) => setItem("height", v)}
+                  />
+                </>
+              )}
               {selectedWindow && (
                 <section
                   className="window-properties"

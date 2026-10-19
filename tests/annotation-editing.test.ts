@@ -34,6 +34,37 @@ function entrance() {
   return p;
 }
 describe("annotation editing and free cabinet doors", () => {
+  it("resizes outlet symbols independently of mounting height and preserves a selectable target", () => {
+    const p = entrance(),
+      outlet = placeFixture(p, "outlet", { x: 0, y: 60 });
+    outlet.width = 6;
+    outlet.depth = 4;
+    const render = () =>
+      renderToStaticMarkup(
+        createElement(PlanItem, {
+          item: outlet,
+          selected: false,
+          onPointerDown: () => {},
+        }),
+      );
+    const small = render();
+    expect(small).toContain(`transform="scale(${6 / 26} ${4 / 26})"`);
+    expect(small).toContain('x="-13" y="-13" width="26" height="26"');
+    outlet.height = 85;
+    expect(render().match(/class="outlet-symbol"[^>]+/)?.[0]).toBe(
+      small.match(/class="outlet-symbol"[^>]+/)?.[0],
+    );
+    expect(render()).toContain("床から 85 cm");
+    expect(parseProject(JSON.stringify(p)).items[0]).toMatchObject({
+      width: 6,
+      depth: 4,
+      height: 85,
+    });
+    outlet.width = 1;
+    outlet.depth = 1;
+    expect(render()).toContain(`transform="scale(${1 / 26} ${1 / 26})"`);
+  });
+
   it("hides one inner dimension without changing its wall, measured length or saved label position", () => {
     const p = entrance(),
       w = p.walls[0];
