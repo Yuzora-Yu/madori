@@ -6,6 +6,7 @@ import {
   type Room,
   type Wall,
   type Project,
+  type Item,
 } from "./model";
 export function furnitureCallouts(p: Project) {
   const items = p.items.filter((i) => !i.kind);
@@ -55,9 +56,10 @@ export function annotationBounds(
   p: Project,
   callouts: ReturnType<typeof furnitureCallouts>,
   windows: ReturnType<typeof windowDimensionEntries> = [],
+  objects: ReturnType<typeof itemDimensionEntries> = [],
 ) {
   const b = bounds(p);
-  if (!callouts.length && !windows.length) return b;
+  if (!callouts.length && !windows.length && !objects.length) return b;
   const windowPoints = windows.flatMap((w) => {
     const m = w.placement,
       offset = w.offset + 50;
@@ -66,33 +68,44 @@ export function annotationBounds(
       y: p.y + m.ux * offset,
     }));
   });
+  const objectPoints = objects.flatMap((entry) => entry.points);
   const minX = Math.min(
       b.x,
       ...callouts.map((c) => c.x - 20),
       ...windowPoints.map((p) => p.x - 30),
+      ...objectPoints.map((p) => p.x - 30),
     ),
     minY = Math.min(
       b.y,
       ...callouts.map((c) => c.y - 36),
       ...windowPoints.map((p) => p.y - 30),
+      ...objectPoints.map((p) => p.y - 30),
     ),
     maxX = Math.max(
       b.x + b.width,
       ...callouts.map((c) => c.x + c.width + 20),
       ...windowPoints.map((p) => p.x + 30),
+      ...objectPoints.map((p) => p.x + 30),
     ),
     maxY = Math.max(
       b.y + b.height,
       ...callouts.map((c) => c.y + 36),
       ...windowPoints.map((p) => p.y + 30),
+      ...objectPoints.map((p) => p.y + 30),
     );
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
 export function windowDimensionEntries(p: Project) {
+  return openingDimensionEntries(p, (item) => item.kind === "window");
+}
+export function openingDimensionEntries(
+  p: Project,
+  visible: (item: Item) => boolean = () => true,
+) {
   const lanes = new Map<string, number>();
   return p.items
-    .filter((i) => i.kind === "window")
+    .filter((i) => !i.dimensionHidden && visible(i))
     .slice()
     .sort((a, b) => a.id.localeCompare(b.id))
     .flatMap((item) => {
@@ -101,6 +114,29 @@ export function windowDimensionEntries(p: Project) {
       const lane = lanes.get(placement.wall.id) ?? 0;
       lanes.set(placement.wall.id, lane + 1);
       return [{ item, placement, offset: 58 + lane * 52 }];
+    });
+}
+export function itemDimensionEntries(
+  p: Project,
+  visible: (item: Item) => boolean,
+) {
+  return p.items
+    .filter((item) => visible(item) && !openingPlacement(p, item))
+    .map((item) => {
+      const angle = (item.rotation * Math.PI) / 180;
+      const local = [
+        { x: Math.min(-item.width / 2 - 25, -90), y: -item.depth / 2 - 40 },
+        { x: item.width / 2 + 200, y: -item.depth / 2 - 40 },
+        { x: item.width / 2 + 200, y: item.depth / 2 + 40 },
+        { x: Math.min(-item.width / 2 - 25, -90), y: item.depth / 2 + 40 },
+      ];
+      return {
+        item,
+        points: local.map(({ x, y }) => ({
+          x: item.x + x * Math.cos(angle) - y * Math.sin(angle),
+          y: item.y + x * Math.sin(angle) + y * Math.cos(angle),
+        })),
+      };
     });
 }
 export function rasterSize(width: number, height: number) {

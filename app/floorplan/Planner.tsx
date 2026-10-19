@@ -7,10 +7,19 @@ import { diagramSvg, diagramPng, fileName } from "./exports";
 import PrintPreview from "./PrintPreview";
 import {
   wallDimensionLayout,
-  windowDimensionEntries,
+  openingDimensionEntries,
+  itemDimensionEntries,
   furnitureCallouts,
   annotationBounds,
 } from "../../packages/floorplan/annotations";
+import {
+  dimensionCategories,
+  dimensionVisible,
+  dimensionBoundsProject,
+  itemDimensionVisible,
+  readDimensionDisplay,
+} from "../../packages/floorplan/dimension-display";
+import ItemDimensions from "./ItemDimensions";
 import FurnitureCallouts from "./FurnitureCallouts";
 import {
   openingPlacement,
@@ -61,7 +70,7 @@ import {
 } from "../../packages/floorplan/model";
 import Icon, { type IconName } from "./Icons";
 import PlanItem from "./PlanItem";
-import WindowDimensions from "./WindowDimensions";
+import OpeningDimensions from "./OpeningDimensions";
 import DimensionMemo from "./DimensionMemo";
 import PointMemo from "./PointMemo";
 const Scene3D = lazy(() => import("./Scene3D"));
@@ -150,12 +159,14 @@ export default function Planner() {
     setMeasureDraft(null);
   }, []);
   const [selection, setSelection] = useState<Selection>(null);
+  const selectionKey = selection
+    ? `${selection.type}:${selection.type === "room" ? selection.index : selection.id}`
+    : "";
   const [moveAxis, setMoveAxis] = useState<MoveAxis>("free");
   const [moveStep, setMoveStep] = useState(1);
   const [mode, setMode] = useState<"2d" | "3d">("2d");
   const [grid, setGrid] = useState(true),
     [snapping, setSnapping] = useState(true),
-    [dimensions, setDimensions] = useState(true),
     [cutaway, setCutaway] = useState(true);
   const [viewPreferences] = useState(() => {
     try {
@@ -171,9 +182,10 @@ export default function Planner() {
   const [showFurnitureNames, setShowFurnitureNames] = useState(
     viewPreferences.showFurnitureNames === true,
   );
-  const [showWindowDimensions, setShowWindowDimensions] = useState(
-    viewPreferences.showWindowDimensions !== false,
+  const [dimensionDisplay, setDimensionDisplay] = useState(() =>
+    readDimensionDisplay(viewPreferences),
   );
+  const dimensions = dimensionVisible(dimensionDisplay, "walls");
   useEffect(() => {
     try {
       localStorage.setItem(
@@ -181,16 +193,47 @@ export default function Planner() {
         JSON.stringify({
           seeThrough,
           showFurnitureNames,
-          showWindowDimensions,
+          showWindowDimensions: dimensionDisplay.windows,
+          dimensionDisplay,
         }),
       );
     } catch {
       /* Display settings are optional; project saving reports its own errors. */
     }
-  }, [seeThrough, showFurnitureNames, showWindowDimensions]);
-  const windowDimensions = useMemo(
-    () => (showWindowDimensions ? windowDimensionEntries(project) : []),
-    [project, showWindowDimensions],
+  }, [seeThrough, showFurnitureNames, dimensionDisplay]);
+  const boundsProject = useMemo(
+    () => dimensionBoundsProject(project, dimensionDisplay),
+    [project, dimensionDisplay],
+  );
+  const openingDimensions = useMemo(
+    () =>
+      openingDimensionEntries(project, (item) =>
+        itemDimensionVisible(dimensionDisplay, item),
+      ),
+    [project, dimensionDisplay],
+  );
+  const objectDimensions = useMemo(
+    () =>
+      itemDimensionEntries(project, (item) =>
+        itemDimensionVisible(dimensionDisplay, item),
+      ),
+    [project, dimensionDisplay],
+  );
+  const diagramBounds = useMemo(
+    () =>
+      annotationBounds(
+        boundsProject,
+        showFurnitureNames ? furnitureCallouts(project) : [],
+        openingDimensions,
+        objectDimensions,
+      ),
+    [
+      boundsProject,
+      project,
+      showFurnitureNames,
+      openingDimensions,
+      objectDimensions,
+    ],
   );
   const callouts = useMemo(
     () => (showFurnitureNames ? furnitureCallouts(project) : []),
@@ -201,12 +244,15 @@ export default function Planner() {
     setShowFurnitureNames(next);
     if (next)
       setView(
-        annotationBounds(project, furnitureCallouts(project), windowDimensions),
+        annotationBounds(
+          boundsProject,
+          furnitureCallouts(project),
+          openingDimensions,
+          objectDimensions,
+        ),
       );
   };
-  const [view, setView] = useState<View>(() =>
-    annotationBounds(initial.project, callouts, windowDimensions),
-  );
+  const [view, setView] = useState<View>(diagramBounds);
   const [canvasSize, setCanvasSize] = useState({ width: 700, height: 450 });
   const [draft, setDraft] = useState<{ a: Point; b: Point } | null>(null);
   const [search, setSearch] = useState(""),
@@ -234,6 +280,8 @@ export default function Planner() {
     () => !window.matchMedia("(max-width: 1100px)").matches,
   );
   const previousPanels = useRef({ library: true, details: true });
+  const dimensionSettings = useRef<HTMLDivElement>(null);
+  const [dimensionSettingsRequest, setDimensionSettingsRequest] = useState(0);
   const canvasDimensions = useRef<{ width: number; height: number } | null>(
     null,
   );
@@ -260,9 +308,25 @@ export default function Planner() {
   };
   const closePanel = (panel: "library" | "details") => {
     if (panel === "library") setLibraryOpen(false);
-    else setDetailsOpen(false);
+    else {
+      setDetailsOpen(false);
+      setDimensionSettingsRequest(0);
+    }
     document.getElementById(`${panel}-toggle`)?.focus();
   };
+  useEffect(() => {
+    if (detailsOpen)
+      document.getElementById("details-panel")?.scrollTo({ top: 0 });
+  }, [detailsOpen, selectionKey]);
+  useEffect(() => {
+    if (!dimensionSettingsRequest || !detailsOpen) return;
+    const frame = requestAnimationFrame(() => {
+      dimensionSettings.current?.scrollIntoView({ block: "start" });
+      dimensionSettings.current?.focus({ preventScroll: true });
+      setDimensionSettingsRequest(0);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [dimensionSettingsRequest, detailsOpen]);
   useEffect(() => {
     const query = window.matchMedia("(max-width: 1100px)");
     const update = () => {
@@ -397,7 +461,7 @@ export default function Planner() {
     setSelection(null);
   }, [selection, change]);
   const fit = useCallback(() => {
-    const b = annotationBounds(project, callouts, windowDimensions),
+    const b = diagramBounds,
       rect = svg.current?.getBoundingClientRect();
     const aspect = rect ? rect.width / rect.height : 1.3;
     const width = Math.max(b.width, b.height * aspect),
@@ -408,7 +472,7 @@ export default function Planner() {
       width,
       height,
     });
-  }, [project, callouts, windowDimensions]);
+  }, [diagramBounds]);
   useEffect(() => {
     if (blocked) return;
     const timer = setTimeout(() => {
@@ -873,7 +937,7 @@ export default function Planner() {
     if (overlayPanels) setLibraryOpen(false);
     setNotice(`${f.name}を配置しました。ドラッグで位置を調整できます。`);
   }
-  function setItem(key: string, value: string | number) {
+  function setItem(key: string, value: string | number | boolean) {
     if (selectedItem?.kind === "window" && key === "width") {
       change((p) => resizeOpeningWidth(p, selectedItem.id, Number(value)));
       return;
@@ -930,7 +994,7 @@ export default function Planner() {
   }
   function exportSvg() {
     if (!svg.current) return;
-    const b = annotationBounds(project, callouts, windowDimensions);
+    const b = diagramBounds;
     download(
       new Blob([diagramSvg(svg.current, b, project.name)], {
         type: "image/svg+xml",
@@ -942,7 +1006,7 @@ export default function Planner() {
     if (!svg.current || exportBusy) return;
     setExportBusy(true);
     try {
-      const b = annotationBounds(project, callouts, windowDimensions);
+      const b = diagramBounds;
       const blob = await diagramPng(svg.current, b, project.name);
       download(blob, `${fileName(project.name)}.png`);
       setNotice("PNG画像を保存しました。");
@@ -956,7 +1020,7 @@ export default function Planner() {
   }
   function openPrint() {
     if (!svg.current) return;
-    const b = annotationBounds(project, callouts, windowDimensions);
+    const b = diagramBounds;
     setPrintPreview({
       svg: diagramSvg(svg.current, b, project.name),
       name: project.name,
@@ -1363,14 +1427,28 @@ export default function Planner() {
             </div>
             <div className="display-tools" aria-label="2Dの表示切替">
               <button
-                aria-label="窓の寸法を常時表示"
-                title="窓の幅・高さ・壁からの距離を表示"
-                aria-pressed={showWindowDimensions}
-                className={showWindowDimensions ? "active" : ""}
-                onClick={() => setShowWindowDimensions(!showWindowDimensions)}
+                aria-label="寸法をまとめて表示"
+                title="すべての寸法・メモ・面積を表示／非表示"
+                aria-pressed={dimensionDisplay.enabled}
+                className={dimensionDisplay.enabled ? "active" : ""}
+                onClick={() =>
+                  setDimensionDisplay((v) => ({ ...v, enabled: !v.enabled }))
+                }
               >
                 <Icon name="ruler" size={18} />
-                <span>窓寸法</span>
+                <span>寸法</span>
+              </button>
+              <button
+                aria-label="寸法の表示設定"
+                title="種類ごとに寸法の表示・非表示を設定"
+                aria-controls="dimension-display-settings"
+                onClick={() => {
+                  setDetailsOpen(true);
+                  if (overlayPanels) setLibraryOpen(false);
+                  setDimensionSettingsRequest((v) => v + 1);
+                }}
+              >
+                <Icon name="settings" size={18} />
               </button>
               <button
                 aria-label="家具を半透明にする"
@@ -1673,14 +1751,16 @@ export default function Planner() {
                     >
                       {roomLabel(r)?.name || `部屋 ${index + 1}`}
                     </text>
-                    <text
-                      x={r.center.x}
-                      y={r.center.y + 16}
-                      textAnchor="middle"
-                      className="room-area"
-                    >
-                      {interiorRoom(project, r).area.toFixed(1)} m²
-                    </text>
+                    {dimensionVisible(dimensionDisplay, "areas") && (
+                      <text
+                        x={r.center.x}
+                        y={r.center.y + 16}
+                        textAnchor="middle"
+                        className="room-area"
+                      >
+                        {interiorRoom(project, r).area.toFixed(1)} m²
+                      </text>
+                    )}
                   </g>
                 ))}
                 {dimensions &&
@@ -1711,47 +1791,49 @@ export default function Planner() {
                     );
                   })}
                 {showFurnitureNames && <FurnitureCallouts entries={callouts} />}
-                {project.notes.map((n) => (
-                  <PointMemo
-                    key={n.id}
-                    entry={n}
-                    selected={selectedPointNote?.id === n.id}
-                    onPointerDown={(e, part) => {
-                      if (tool !== "select" || e.altKey || e.button !== 0)
-                        return;
-                      e.stopPropagation();
-                      setSelection({ type: "note", id: n.id });
-                      gesture.current = {
-                        type: "note",
-                        part,
-                        before: project,
-                        id: n.id,
-                        offset: world(e),
-                      };
-                      svg.current?.setPointerCapture(e.pointerId);
-                    }}
-                  />
-                ))}
-                {project.dimensions.map((d) => (
-                  <DimensionMemo
-                    key={d.id}
-                    entry={d}
-                    selected={selectedDimension?.id === d.id}
-                    onPointerDown={(e) => {
-                      if (tool !== "select" || e.altKey || e.button !== 0)
-                        return;
-                      e.stopPropagation();
-                      setSelection({ type: "dimension", id: d.id });
-                      gesture.current = {
-                        type: "dimension",
-                        before: project,
-                        id: d.id,
-                        offset: world(e),
-                      };
-                      svg.current?.setPointerCapture(e.pointerId);
-                    }}
-                  />
-                ))}
+                {dimensionVisible(dimensionDisplay, "memos") &&
+                  project.notes.map((n) => (
+                    <PointMemo
+                      key={n.id}
+                      entry={n}
+                      selected={selectedPointNote?.id === n.id}
+                      onPointerDown={(e, part) => {
+                        if (tool !== "select" || e.altKey || e.button !== 0)
+                          return;
+                        e.stopPropagation();
+                        setSelection({ type: "note", id: n.id });
+                        gesture.current = {
+                          type: "note",
+                          part,
+                          before: project,
+                          id: n.id,
+                          offset: world(e),
+                        };
+                        svg.current?.setPointerCapture(e.pointerId);
+                      }}
+                    />
+                  ))}
+                {dimensionVisible(dimensionDisplay, "memos") &&
+                  project.dimensions.map((d) => (
+                    <DimensionMemo
+                      key={d.id}
+                      entry={d}
+                      selected={selectedDimension?.id === d.id}
+                      onPointerDown={(e) => {
+                        if (tool !== "select" || e.altKey || e.button !== 0)
+                          return;
+                        e.stopPropagation();
+                        setSelection({ type: "dimension", id: d.id });
+                        gesture.current = {
+                          type: "dimension",
+                          before: project,
+                          id: d.id,
+                          offset: world(e),
+                        };
+                        svg.current?.setPointerCapture(e.pointerId);
+                      }}
+                    />
+                  ))}
                 {tool === "measure" && measureDraft && (
                   <g data-editor-only="measure-draft">
                     <DimensionMemo
@@ -1764,23 +1846,18 @@ export default function Planner() {
                     />
                   </g>
                 )}
-                {windowDimensions.map((w) => (
-                  <WindowDimensions
+                {openingDimensions.map((w) => (
+                  <OpeningDimensions
                     key={w.item.id}
                     item={w.item}
                     placement={w.placement}
                     offset={w.offset}
-                    selected={selectedWindow?.id === w.item.id}
+                    selected={selectedItem?.id === w.item.id}
                   />
                 ))}
-                {!showWindowDimensions && selectedWindow && windowPlacement && (
-                  <WindowDimensions
-                    item={selectedWindow}
-                    placement={windowPlacement}
-                    selected
-                    editorOnly
-                  />
-                )}
+                {objectDimensions.map(({ item }) => (
+                  <ItemDimensions key={item.id} item={item} />
+                ))}
                 {draft && (
                   <g pointerEvents="none">
                     <line
@@ -2072,6 +2149,17 @@ export default function Planner() {
                   onChange={(e) => setItem("name", e.target.value)}
                 />
               </label>
+              <Toggle
+                label="このアイテムの寸法を表示"
+                checked={!selectedItem.dimensionHidden}
+                onChange={(visible) => setItem("dimensionHidden", !visible)}
+              />
+              <p className="property-note">
+                種類別の表示設定がオンのときに表示します。非表示にしてもアイテム本体を選んで戻せます。
+                {selectedItem.kind &&
+                  ["door", "sliding", "opening"].includes(selectedItem.kind) &&
+                  "開口幅は全体の幅です。戸を開けたときに通れる有効開口幅とは異なります。"}
+              </p>
               <h3 className="section-label">
                 {selectedWindow ? "窓のサイズ" : "サイズ"}
               </h3>
@@ -2649,16 +2737,36 @@ export default function Planner() {
                   checked={snapping}
                   onChange={setSnapping}
                 />
-                <Toggle
-                  label="窓の寸法を常時表示"
-                  checked={showWindowDimensions}
-                  onChange={setShowWindowDimensions}
-                />
-                <Toggle
-                  label="壁の寸法を表示"
-                  checked={dimensions}
-                  onChange={setDimensions}
-                />
+                <div
+                  id="dimension-display-settings"
+                  ref={dimensionSettings}
+                  tabIndex={-1}
+                  className="dimension-display-settings"
+                  role="group"
+                  aria-label="寸法の表示設定"
+                >
+                  <h3 className="section-label">寸法の表示</h3>
+                  <Toggle
+                    label="寸法をまとめて表示"
+                    checked={dimensionDisplay.enabled}
+                    onChange={(enabled) =>
+                      setDimensionDisplay((v) => ({ ...v, enabled }))
+                    }
+                  />
+                  <p className="property-note">
+                    一括で隠しても、下の種類別設定を保持します。画像保存・印刷にも反映します。
+                  </p>
+                  {dimensionCategories.map(([key, label]) => (
+                    <Toggle
+                      key={key}
+                      label={label}
+                      checked={dimensionDisplay[key]}
+                      onChange={(value) =>
+                        setDimensionDisplay((v) => ({ ...v, [key]: value }))
+                      }
+                    />
+                  ))}
+                </div>
                 <Toggle
                   label="家具を半透明にする"
                   checked={seeThrough}

@@ -42,6 +42,7 @@ export interface Furniture {
   shape: Shape;
 }
 export interface Item {
+  dimensionHidden?: boolean;
   wallSnap?: boolean;
   baseElevation?: number;
   shelfLevels?: number;
@@ -659,6 +660,8 @@ export function parseProject(text: string): Project {
         dimensions(i) &&
         appearance(i) &&
         finite(i.rotation) &&
+        (i.dimensionHidden === undefined ||
+          typeof i.dimensionHidden === "boolean") &&
         (i.wallSnap === undefined || typeof i.wallSnap === "boolean") &&
         (i.doorHinge === undefined ||
           ["left", "right"].includes(i.doorHinge)) &&

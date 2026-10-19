@@ -1,6 +1,6 @@
 import type { Item } from "../../packages/floorplan/model";
 import type { openingPlacement } from "../../packages/floorplan/geometry";
-export default function WindowDimensions({
+export default function OpeningDimensions({
   item,
   placement: m,
   offset = 58,
@@ -20,13 +20,18 @@ export default function WindowDimensions({
     right = m.center + item.width / 2;
   const segments = [
     { start: a, end: left, text: `${Number(m.gapA.toFixed(1))} cm` },
-    { start: left, end: right, text: `幅 ${Number(item.width.toFixed(1))} cm` },
+    {
+      start: left,
+      end: right,
+      text: `${item.kind === "window" ? "幅" : "開口幅"} ${Number(item.width.toFixed(1))} cm`,
+    },
     { start: right, end: b, text: `${Number(m.gapB.toFixed(1))} cm` },
   ];
   return (
     <g
       data-editor-only={editorOnly ? "window-dimensions" : undefined}
-      data-window-dimensions={item.id}
+      data-window-dimensions={item.kind === "window" ? item.id : undefined}
+      data-opening-dimensions={item.kind !== "window" ? item.id : undefined}
       pointerEvents="none"
       transform={`translate(${m.start.x} ${m.start.y}) rotate(${angle})`}
       fill="#2d634b"

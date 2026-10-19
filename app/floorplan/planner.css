@@ -1727,6 +1727,18 @@ svg {
   border-left: 1px solid #e5e9df;
   padding-left: 5px;
 }
+.dimension-display-settings {
+  margin: 12px 0;
+  padding: 12px 0;
+  border-top: 1px solid #e5e9df;
+  border-bottom: 1px solid #e5e9df;
+  scroll-margin-top: 80px;
+}
+.dimension-display-settings:focus {
+  outline: 2px solid #699c80;
+  outline-offset: 4px;
+  border-radius: 4px;
+}
 .toolbar .display-tools button span {
   display: inline;
 }
