@@ -18,9 +18,11 @@ import {
 export default function Scene3D({
   project,
   cutaway,
+  touchInput = false,
 }: {
   project: Project;
   cutaway: boolean;
+  touchInput?: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const [error, setError] = useState("");
@@ -57,6 +59,8 @@ export default function Scene3D({
     renderer.toneMappingExposure = 1.1;
     container.appendChild(renderer.domElement);
     const controls = new OrbitControls(camera, renderer.domElement);
+    controls.touches.ONE = THREE.TOUCH.ROTATE;
+    controls.touches.TWO = THREE.TOUCH.DOLLY_PAN;
     controls.target.set(cx, 0.3, cz);
     controls.maxPolarAngle = Math.PI / 2 - 0.04;
     controls.minDistance = 2;
@@ -406,7 +410,9 @@ export default function Scene3D({
     <div className="scene3d" ref={host}>
       {error && <div className="scene-error">{error}</div>}
       <div className="orbit-hint">
-        ドラッグで回転 · ホイールで拡大 · 右ドラッグで移動
+        {touchInput
+          ? "1本指で回転 · 2本指で移動・ピンチで拡大縮小"
+          : "ドラッグで回転 · ホイールで拡大 · 右ドラッグで移動"}
       </div>
     </div>
   );

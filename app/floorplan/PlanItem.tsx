@@ -4,11 +4,13 @@ export default function PlanItem({
   item: i,
   selected,
   seeThrough = false,
+  touchTarget = false,
   onPointerDown,
 }: {
   item: Item;
   selected: boolean;
   seeThrough?: boolean;
+  touchTarget?: boolean;
   onPointerDown: React.PointerEventHandler<SVGGElement>;
 }) {
   const w = i.width,
@@ -28,6 +30,17 @@ export default function PlanItem({
           ? `${i.name} · プレート ${w} × ${d} cm · 床から ${i.height} cm`
           : `${i.name} · ${w} × ${d} × ${i.height} cm${i.kind === "window" ? ` · 下端は床から${i.baseElevation ?? 90} cm` : ""}`}
       </title>
+      {touchTarget && (
+        <circle
+          data-editor-only="touch-item-target"
+          r="0.1"
+          fill="transparent"
+          stroke="transparent"
+          strokeWidth="44"
+          vectorEffect="non-scaling-stroke"
+          pointerEvents="all"
+        />
+      )}
       {selected && (
         <rect
           data-editor-only="item-selection"

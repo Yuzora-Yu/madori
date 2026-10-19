@@ -1,4 +1,5 @@
 import WallDimension from "./WallDimension";
+import { TouchNavigation } from "../../packages/floorplan/touch-navigation";
 import {
   furniturePosition,
   type MoveAxis,
@@ -165,6 +166,11 @@ export default function Planner() {
   const [moveAxis, setMoveAxis] = useState<MoveAxis>("free");
   const [moveStep, setMoveStep] = useState(1);
   const [mode, setMode] = useState<"2d" | "3d">("2d");
+  const [touchInput, setTouchInput] = useState(
+    () =>
+      navigator.maxTouchPoints > 0 ||
+      window.matchMedia("(any-pointer: coarse)").matches,
+  );
   const [grid, setGrid] = useState(true),
     [snapping, setSnapping] = useState(true),
     [cutaway, setCutaway] = useState(true);
@@ -179,6 +185,16 @@ export default function Planner() {
   const [seeThrough, setSeeThrough] = useState(
     viewPreferences.seeThrough !== false,
   );
+  const [touchControls, setTouchControls] = useState<
+    "auto" | "large" | "compact"
+  >(() =>
+    ["large", "compact"].includes(viewPreferences.touchControls)
+      ? viewPreferences.touchControls
+      : "auto",
+  );
+  const touchHints = touchInput || touchControls === "large";
+  const largeTouchTargets =
+    touchControls === "large" || (touchControls === "auto" && touchInput);
   const [showFurnitureNames, setShowFurnitureNames] = useState(
     viewPreferences.showFurnitureNames === true,
   );
@@ -195,12 +211,13 @@ export default function Planner() {
           showFurnitureNames,
           showWindowDimensions: dimensionDisplay.windows,
           dimensionDisplay,
+          touchControls,
         }),
       );
     } catch {
       /* Display settings are optional; project saving reports its own errors. */
     }
-  }, [seeThrough, showFurnitureNames, dimensionDisplay]);
+  }, [seeThrough, showFurnitureNames, dimensionDisplay, touchControls]);
   const boundsProject = useMemo(
     () => dimensionBoundsProject(project, dimensionDisplay),
     [project, dimensionDisplay],
@@ -376,6 +393,56 @@ export default function Planner() {
   const svg = useRef<SVGSVGElement>(null),
     importInput = useRef<HTMLInputElement>(null),
     gesture = useRef<Gesture | null>(null);
+  const primaryPointer = useRef<{ id: number; type: string } | null>(null);
+  const touchNavigation = useRef(new TouchNavigation());
+  const touchEdit = useRef<{
+    before: Project;
+    selection: Selection;
+    measureDraft: typeof measureDraft;
+    pendingTool: Tool | null;
+  } | null>(null);
+  const cancelPointerInteraction = useCallback(() => {
+    const g = gesture.current,
+      touch = touchEdit.current;
+    if (touch) {
+      setProject(touch.before);
+      setSelection(touch.selection);
+      setMeasureDraft(touch.measureDraft);
+    } else if (g && "before" in g) setProject(g.before);
+    const ids = [...touchNavigation.current.points.keys()];
+    if (primaryPointer.current) ids.push(primaryPointer.current.id);
+    gesture.current = null;
+    primaryPointer.current = null;
+    touchEdit.current = null;
+    touchNavigation.current.reset();
+    setDraft(null);
+    for (const id of ids)
+      if (svg.current?.hasPointerCapture(id))
+        svg.current.releasePointerCapture(id);
+  }, []);
+  useEffect(() => {
+    const hidden = () => {
+      if (document.hidden) cancelPointerInteraction();
+    };
+    window.addEventListener("blur", cancelPointerInteraction);
+    document.addEventListener("visibilitychange", hidden);
+    return () => {
+      window.removeEventListener("blur", cancelPointerInteraction);
+      document.removeEventListener("visibilitychange", hidden);
+    };
+  }, [cancelPointerInteraction]);
+  useEffect(() => {
+    if (primaryPointer.current) cancelPointerInteraction();
+  }, [
+    mode,
+    focusMode,
+    libraryOpen,
+    detailsOpen,
+    furnitureEditor,
+    help,
+    printPreview,
+    cancelPointerInteraction,
+  ]);
   const roomList = useMemo(
     () => rooms({ walls: project.walls }),
     [project.walls],
@@ -429,6 +496,7 @@ export default function Planner() {
     [project, remember],
   );
   const undo = useCallback(() => {
+    if (gesture.current || touchEdit.current) return;
     if (!history.past.length) return;
     setProject(history.past[history.past.length - 1]);
     setHistory({
@@ -438,6 +506,7 @@ export default function Planner() {
     setSelection(null);
   }, [history, project]);
   const redo = useCallback(() => {
+    if (gesture.current || touchEdit.current) return;
     if (!history.future.length) return;
     setProject(history.future[0]);
     setHistory({
@@ -447,6 +516,7 @@ export default function Planner() {
     setSelection(null);
   }, [history, project]);
   const remove = useCallback(() => {
+    if (gesture.current || touchEdit.current) return;
     if (!selection) return;
     change((p) => {
       if (selection.type === "note")
@@ -509,6 +579,12 @@ export default function Planner() {
         height = el.clientHeight;
       if (!width || !height) return;
       const previous = canvasDimensions.current;
+      if (
+        previous &&
+        (previous.width !== width || previous.height !== height) &&
+        primaryPointer.current
+      )
+        cancelPointerInteraction();
       canvasDimensions.current = { width, height };
       setCanvasSize({ width, height });
       setView((v) => {
@@ -528,7 +604,7 @@ export default function Planner() {
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [mode]);
+  }, [mode, cancelPointerInteraction]);
   useEffect(() => {
     if (!furnitureEditor && !help) return;
     const previous = document.activeElement as HTMLElement | null;
@@ -568,6 +644,7 @@ export default function Planner() {
     if (!el || mode !== "2d") return;
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
+      if (touchNavigation.current.points.size) return;
       const matrix = el.getScreenCTM();
       if (!matrix) return;
       const point = new DOMPoint(e.clientX, e.clientY).matrixTransform(
@@ -602,6 +679,7 @@ export default function Planner() {
         selectedItem &&
         (!selectedItem.kind || selectedItem.wallSnap === false) &&
         !gesture.current &&
+        !touchEdit.current &&
         !e.ctrlKey &&
         !e.metaKey &&
         !e.altKey &&
@@ -643,16 +721,7 @@ export default function Planner() {
           toggleFocus();
           return;
         }
-        const g = gesture.current;
-        if (
-          g?.type === "item" ||
-          g?.type === "dimension" ||
-          g?.type === "note" ||
-          g?.type === "wallLabel"
-        )
-          setProject(g.before);
-        gesture.current = null;
-        setDraft(null);
+        cancelPointerInteraction();
         chooseTool("select");
         setSelection(null);
       }
@@ -709,12 +778,14 @@ export default function Planner() {
     overlayPanels,
     libraryOpen,
     detailsOpen,
+    cancelPointerInteraction,
   ]);
   function nudgeFurniture(dx: number, dy: number) {
     if (
       !selectedItem ||
       (selectedItem.kind && selectedItem.wallSnap !== false) ||
-      gesture.current
+      gesture.current ||
+      touchEdit.current
     )
       return;
     change((p) => {
@@ -734,6 +805,64 @@ export default function Planner() {
     x: snap(p.x, snapping),
     y: snap(p.y, snapping),
   });
+  function pointerDownCapture(e: React.PointerEvent<SVGSVGElement>) {
+    if (e.pointerType !== "touch") {
+      if (![0, 1, 2].includes(e.button)) return;
+      if (
+        touchNavigation.current.points.size ||
+        (primaryPointer.current && primaryPointer.current.id !== e.pointerId)
+      ) {
+        e.stopPropagation();
+        return;
+      }
+      primaryPointer.current = { id: e.pointerId, type: e.pointerType };
+      svg.current?.setPointerCapture(e.pointerId);
+      return;
+    }
+    if (primaryPointer.current && primaryPointer.current.type !== "touch") {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    const rect = svg.current?.getBoundingClientRect();
+    if (!rect) return;
+    e.preventDefault();
+    svg.current?.setPointerCapture(e.pointerId);
+    const result = touchNavigation.current.begin(
+      e.pointerId,
+      { x: e.clientX, y: e.clientY },
+      view,
+      rect,
+    );
+    if (result === "first") {
+      primaryPointer.current = { id: e.pointerId, type: "touch" };
+      touchEdit.current = {
+        before: project,
+        selection,
+        measureDraft,
+        pendingTool: null,
+      };
+      gesture.current =
+        tool === "select" || tool === "pan"
+          ? {
+              type: "pan",
+              screen: { x: e.clientX, y: e.clientY },
+              view,
+              scale: svg.current?.getScreenCTM()?.a || 1,
+            }
+          : null;
+    } else {
+      if (result === "navigation-start" && touchEdit.current) {
+        setProject(touchEdit.current.before);
+        setSelection(touchEdit.current.selection);
+        setMeasureDraft(touchEdit.current.measureDraft);
+        touchEdit.current.pendingTool = null;
+      }
+      gesture.current = null;
+      setDraft(null);
+      e.stopPropagation();
+    }
+  }
   function pointerDown(e: React.PointerEvent<SVGSVGElement>) {
     if (![0, 1, 2].includes(e.button)) return;
     const point = snapped(world(e));
@@ -749,8 +878,24 @@ export default function Planner() {
       };
       return;
     }
-    if (tool === "note") {
-      e.preventDefault();
+    if (e.pointerType === "touch" && tool === "select") {
+      setSelection(null);
+      return;
+    }
+    if (tool === "wall") {
+      gesture.current = { type: "wall", start: point };
+      setDraft({ a: point, b: point });
+      setSelection(null);
+      return;
+    }
+    if (e.pointerType === "touch" && touchEdit.current) {
+      touchEdit.current.pendingTool = tool;
+      return;
+    }
+    applyToolAt(point);
+  }
+  function applyToolAt(point: Point, action: Tool = tool) {
+    if (action === "note") {
       let id = "";
       change((p) => {
         id = addPointNote(p, point).id;
@@ -761,7 +906,7 @@ export default function Planner() {
       setDetailsOpen(true);
       return;
     }
-    if (tool === "measure") {
+    if (action === "measure") {
       if (!measureDraft) setMeasureDraft({ a: point, b: point });
       else {
         if (distance(measureDraft.a, point) < 1) {
@@ -781,16 +926,10 @@ export default function Planner() {
       }
       return;
     }
-    if (tool === "wall") {
-      gesture.current = { type: "wall", start: point };
-      setDraft({ a: point, b: point });
-      setSelection(null);
-      return;
-    }
-    if (tool !== "select") {
+    if (!["select", "pan", "wall"].includes(action)) {
       let id = "";
       change((p) => {
-        id = placeFixture(p, tool as FixtureKind, point).id;
+        id = placeFixture(p, action as FixtureKind, point).id;
       });
       setSelection({ type: "item", id });
       chooseTool("select");
@@ -799,6 +938,22 @@ export default function Planner() {
     setSelection(null);
   }
   function pointerMove(e: React.PointerEvent<SVGSVGElement>) {
+    if (e.pointerType === "touch") {
+      if (!touchNavigation.current.points.has(e.pointerId)) return;
+      const next = touchNavigation.current.move(e.pointerId, {
+        x: e.clientX,
+        y: e.clientY,
+      });
+      if (touchNavigation.current.navigating) {
+        if (next) setView(next);
+        return;
+      }
+      if (!touchNavigation.current.moved) return;
+    } else if (
+      primaryPointer.current &&
+      primaryPointer.current.id !== e.pointerId
+    )
+      return;
     const g = gesture.current;
     if (tool === "measure" && measureDraft && !g)
       setMeasureDraft({ ...measureDraft, b: snapped(world(e)) });
@@ -886,6 +1041,32 @@ export default function Planner() {
     }
   }
   function pointerUp(e: React.PointerEvent<SVGSVGElement>) {
+    if (e.pointerType === "touch") {
+      const result = touchNavigation.current.end(e.pointerId);
+      if (!result) return;
+      if (result.navigation) {
+        if (result.finished) {
+          primaryPointer.current = null;
+          touchEdit.current = null;
+        } else {
+          primaryPointer.current = {
+            id: touchNavigation.current.points.keys().next().value!,
+            type: "touch",
+          };
+        }
+        if (svg.current?.hasPointerCapture(e.pointerId))
+          svg.current.releasePointerCapture(e.pointerId);
+        return;
+      }
+      const action = touchEdit.current?.pendingTool;
+      touchEdit.current = null;
+      if (action) applyToolAt(snapped(world(e)), action);
+    } else if (
+      primaryPointer.current &&
+      primaryPointer.current.id !== e.pointerId
+    )
+      return;
+    primaryPointer.current = null;
     const g = gesture.current;
     gesture.current = null;
     setDraft(null);
@@ -1052,7 +1233,14 @@ export default function Planner() {
   );
   return (
     <div
-      className={`planner ${focusMode ? "focus-mode" : ""} ${overlayPanels ? "overlay-panels" : ""} ${libraryOpen ? "library-open" : ""} ${detailsOpen ? "details-open" : ""}`}
+      className={`planner ${largeTouchTargets ? "touch-input" : ""} ${focusMode ? "focus-mode" : ""} ${overlayPanels ? "overlay-panels" : ""} ${libraryOpen ? "library-open" : ""} ${detailsOpen ? "details-open" : ""}`}
+      onPointerUpCapture={(e) => {
+        if (
+          e.pointerType === "touch" &&
+          touchNavigation.current.points.size <= 1
+        )
+          setTouchInput(true);
+      }}
     >
       <header className="app-header" hidden={focusMode}>
         <a className="brand" href={import.meta.env.BASE_URL}>
@@ -1372,6 +1560,7 @@ export default function Planner() {
                 <button
                   className={mode === "3d" ? "active" : ""}
                   onClick={() => {
+                    cancelPointerInteraction();
                     setMode("3d");
                     chooseTool("select");
                   }}
@@ -1607,19 +1796,16 @@ export default function Planner() {
                 className="plan-canvas"
                 viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`}
                 onPointerDown={pointerDown}
+                onPointerDownCapture={pointerDownCapture}
                 onPointerMove={pointerMove}
                 onPointerUp={pointerUp}
-                onPointerCancel={() => {
-                  const g = gesture.current;
+                onPointerCancel={cancelPointerInteraction}
+                onLostPointerCapture={(e) => {
                   if (
-                    g?.type === "item" ||
-                    g?.type === "dimension" ||
-                    g?.type === "note" ||
-                    g?.type === "wallLabel"
+                    touchNavigation.current.points.has(e.pointerId) ||
+                    primaryPointer.current?.id === e.pointerId
                   )
-                    setProject(g.before);
-                  gesture.current = null;
-                  setDraft(null);
+                    cancelPointerInteraction();
                 }}
                 onContextMenu={(e) => e.preventDefault()}
                 aria-label="間取り編集キャンバス"
@@ -1738,6 +1924,7 @@ export default function Planner() {
                     item={i}
                     selected={selectedItem?.id === i.id}
                     seeThrough={seeThrough}
+                    touchTarget={touchHints}
                     onPointerDown={(e) => selectItem(e, i.id)}
                   />
                 ))}
@@ -1892,7 +2079,11 @@ export default function Planner() {
                   <div className="scene-error">3Dビューを準備しています…</div>
                 }
               >
-                <Scene3D project={project} cutaway={cutaway} />
+                <Scene3D
+                  project={project}
+                  cutaway={cutaway}
+                  touchInput={touchHints}
+                />
               </Suspense>
             )}
             <div className="canvas-badge">
@@ -1913,10 +2104,15 @@ export default function Planner() {
                           ? "2点目をクリック・タップして寸法メモを追加"
                           : "1点目をクリック・タップ · 次に2点目を指定"
                         : tool === "select"
-                          ? "家具をドラッグで移動 · Shiftで縦横固定 · 右ドラッグで画面を移動"
+                          ? touchHints
+                            ? "1本指で家具を移動 · 2本指で画面移動・ピンチで拡大縮小"
+                            : "家具をドラッグで移動 · Shiftで縦横固定 · 右ドラッグで画面を移動"
                           : tool === "pan"
                             ? "ドラッグで画面を移動"
-                            : `${fixtureDefaults[tool].name}を置く位置をクリック`}
+                            : `${fixtureDefaults[tool].name}を置く位置を${touchHints ? "タップ" : "クリック"}`}
+                  {touchHints &&
+                    tool !== "select" &&
+                    " · 2本指で画面移動・拡大縮小"}
                 </div>
                 <div className="zoom-controls">
                   <button
@@ -2725,6 +2921,19 @@ export default function Planner() {
           )}
           <div className="display-settings">
             <h3 className="section-label">表示オプション</h3>
+            <label className="field">
+              操作ボタンの大きさ
+              <select
+                value={touchControls}
+                onChange={(e) =>
+                  setTouchControls(e.target.value as typeof touchControls)
+                }
+              >
+                <option value="auto">自動（タッチ端末は大きめ）</option>
+                <option value="large">大きめ（タッチ向け）</option>
+                <option value="compact">コンパクト</option>
+              </select>
+            </label>
             {mode === "2d" ? (
               <>
                 <Toggle

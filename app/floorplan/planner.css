@@ -2033,3 +2033,64 @@ svg {
 .tool-cabinetDoor .plan-canvas {
   cursor: crosshair;
 }
+
+/* Input targets follow touch hardware even when the browser uses a desktop viewport. */
+.touch-input button,
+.touch-input summary,
+.touch-input .view-switch button,
+.touch-input .toolbar button,
+.touch-input .zoom-controls button,
+.touch-input .nudge-buttons button {
+  min-width: 44px;
+  min-height: 44px;
+  height: auto;
+  touch-action: manipulation;
+}
+.touch-input .editor-header {
+  min-height: 56px;
+  height: auto;
+}
+.touch-input .toolbar {
+  flex-wrap: wrap;
+}
+.touch-input .drawing-tools {
+  flex: 1 1 240px;
+}
+.touch-input .field input,
+.touch-input .field select,
+.touch-input .field textarea,
+.touch-input .furniture-move-bar select {
+  min-height: 44px;
+  font-size: 16px;
+}
+.touch-input .toggle-row {
+  min-height: 44px;
+}
+.touch-input .plan-canvas {
+  -webkit-touch-callout: none;
+}
+.touch-input .canvas-instruction {
+  display: block;
+  bottom: 72px;
+  font-size: 11px;
+}
+.touch-input.focus-mode .canvas-instruction {
+  display: none;
+}
+.touch-input .zoom-controls {
+  max-width: calc(100% - 24px);
+  padding: 4px 6px;
+  gap: 4px;
+}
+@media (max-width: 600px) {
+  .touch-input .canvas-instruction {
+    display: none;
+  }
+  .touch-input .toolbar .display-tools button span {
+    display: none;
+  }
+  .touch-input .toolbar .history-tools button,
+  .touch-input .toolbar .export-tools button {
+    width: 44px;
+  }
+}
